@@ -7,4 +7,4 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 EXPOSE 3001
-CMD ["sh", "-c", "DATABASE_URL=$DIRECT_URL npx prisma migrate deploy && node dist/main"]
+CMD ["/bin/sh", "-c", "npx prisma migrate deploy && node dist/main"]
