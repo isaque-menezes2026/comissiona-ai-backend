@@ -34,7 +34,7 @@ export class GoalsService {
         });
         achieved = agg._count;
       }
-      const pct = g.targetValue > 0 ? (achieved / Number(g.targetValue)) * 100 : 0;
+      const pct = Number(g.targetValue) > 0 ? (achieved / Number(g.targetValue)) * 100 : 0;
       return { ...g, achieved, percentage: Math.min(pct, 100) };
     }));
   }

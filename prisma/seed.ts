@@ -95,7 +95,7 @@ async function main() {
 
     for (const rule of ruleDefs) {
       await prisma.commissionRule.create({
-        data: { ...rule, tenantId: tenant.id, appliesOnNetAmount: true, requiresCustomerActive: true, requiresInvoicePaid: true, active: true },
+        data: { ...rule, tenantId: tenant.id, appliesOnNetAmount: true, requiresCustomerActive: true, requiresInvoicePaid: true, active: true } as any,
       })
       console.log('✅ Regra:', rule.name)
     }
