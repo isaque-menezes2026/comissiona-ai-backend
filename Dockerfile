@@ -5,6 +5,5 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 RUN npx prisma generate
-RUN npm run build && ls -la dist/
 EXPOSE 3001
-CMD ["node", "dist/main"]
+CMD ["sh", "-c", "npm run build && node dist/main"]
