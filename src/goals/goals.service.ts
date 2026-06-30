@@ -85,12 +85,17 @@ export class GoalsService {
         sale: { tenantId, saleDate: { gte: start, lte: end }, status: { not: 'CANCELLED' } },
       };
       if (g.productId) saleItemWhere.productId = g.productId;
+      if (g.sellerId) saleItemWhere.sale.sellerId = g.sellerId;
 
-      const agg = await this.prisma.saleItem.aggregate({
-        where: saleItemWhere,
-        _sum: { grossValue: true },
-      });
-      achieved = Number(agg._sum?.grossValue || 0);
+      if (g.type === 'quantity') {
+        achieved = await this.prisma.saleItem.count({ where: saleItemWhere });
+      } else {
+        const agg = await this.prisma.saleItem.aggregate({
+          where: saleItemWhere,
+          _sum: { grossValue: true },
+        });
+        achieved = Number(agg._sum?.grossValue || 0);
+      }
 
       const pct = Number(g.targetValue) > 0 ? (achieved / Number(g.targetValue)) * 100 : 0;
       return { ...g, achieved, percentage: Math.min(pct, 999) };
