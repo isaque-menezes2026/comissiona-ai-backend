@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class PeopleService {
   constructor(private prisma: PrismaService) {}
 
-  // SELLERS
   async findAllSellers(tenantId: string) {
     return this.prisma.seller.findMany({ where: { tenantId }, orderBy: { name: 'asc' } });
   }
@@ -16,7 +16,6 @@ export class PeopleService {
     return this.prisma.seller.update({ where: { id }, data: dto });
   }
 
-  // PARTNERS
   async findAllPartners(tenantId: string) {
     return this.prisma.partner.findMany({ where: { tenantId }, orderBy: { name: 'asc' } });
   }
@@ -27,7 +26,6 @@ export class PeopleService {
     return this.prisma.partner.update({ where: { id }, data: dto });
   }
 
-  // EMPLOYEES
   async findAllEmployees(tenantId: string) {
     return this.prisma.employee.findMany({ where: { tenantId }, orderBy: { name: 'asc' } });
   }
@@ -57,5 +55,21 @@ export class PeopleService {
       salesCount: sales.find(x => x.sellerId === s.id)?._count || 0,
       totalCommission: Number(commissions.find(x => x.sellerId === s.id)?._sum?.amount || 0),
     })).sort((a, b) => b.totalCommission - a.totalCommission).map((x, i) => ({ ...x, rank: i + 1 }));
+  }
+
+  async findAllUsers(tenantId: string) {
+    return this.prisma.user.findMany({
+      where: { tenantId },
+      select: { id: true, name: true, email: true, role: true, active: true, lastLoginAt: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async resetUserPassword(tenantId: string, userId: string, newPassword: string) {
+    const user = await this.prisma.user.findFirst({ where: { id: userId, tenantId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    const hash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash: hash } });
+    return { message: 'Senha redefinida com sucesso' };
   }
 }
