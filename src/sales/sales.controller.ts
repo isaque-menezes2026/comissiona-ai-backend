@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { SalesService, CreateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
+import { SalesService, CreateSaleDto, UpdateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
 
 @ApiTags('sales')
 @ApiBearerAuth()
@@ -23,6 +23,11 @@ export class SalesController {
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.sales.findOne(req.user.tenantId, id);
+  }
+
+  @Patch(':id')
+  update(@Request() req, @Param('id') id: string, @Body() dto: UpdateSaleDto) {
+    return this.sales.update(req.user.tenantId, id, dto, req.user.id);
   }
 
   @Patch(':id/status')

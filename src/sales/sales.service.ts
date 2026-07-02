@@ -1,5 +1,5 @@
 // src/sales/sales.service.ts
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CommissionEngineService } from '../commission-engine/commission-engine.service';
 import { AuditService } from '../audit/audit.service';
@@ -25,6 +25,27 @@ export interface CreateSaleDto {
   }>;
 }
 
+export interface UpdateSaleDto {
+  customerId?: string;
+  sellerId?: string;
+  partnerId?: string;
+  employeeId?: string;
+  origin?: string;
+  taxRate?: number;
+  saleDate?: string;
+  contractDate?: string;
+  billingStartDate?: string;
+  notes?: string;
+  status?: SaleStatus;
+  items?: Array<{
+    productId: string;
+    type: 'IMPLANTATION' | 'MONTHLY' | 'ONE_TIME' | 'ANNUAL';
+    grossValue: number;
+    quantity?: number;
+    notes?: string;
+  }>;
+}
+
 export interface RegisterInvoicePaymentDto {
   saleId: string;
   installmentNum: number;
@@ -41,6 +62,10 @@ export class SalesService {
   ) {}
 
   async create(tenantId: string, dto: CreateSaleDto, userId: string) {
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('A venda deve ter pelo menos um item (produto).');
+    }
+
     const taxRateDecimal = dto.taxRate / 100;
 
     const sale = await this.prisma.sale.create({
@@ -62,7 +87,6 @@ export class SalesService {
             productId: item.productId,
             type: item.type,
             grossValue: item.grossValue,
-            // ADENDO: valor líquido calculado automaticamente
             netValue: parseFloat((item.grossValue * (1 - taxRateDecimal)).toFixed(2)),
             taxRate: taxRateDecimal,
             quantity: item.quantity || 1,
@@ -87,12 +111,108 @@ export class SalesService {
       userId,
     });
 
-    // Dispara motor de comissão assincronamente
     setImmediate(() => {
       this.engine.processSale({ tenantId, saleId: sale.id, triggeredBy: userId });
     });
 
     return sale;
+  }
+
+  async update(tenantId: string, id: string, dto: UpdateSaleDto, userId: string) {
+    const sale = await this.prisma.sale.findFirst({ where: { id, tenantId } });
+    if (!sale) throw new NotFoundException('Venda não encontrada.');
+
+    // Não permite editar venda cancelada
+    if (sale.status === SaleStatus.CANCELLED) {
+      throw new BadRequestException('Não é possível editar uma venda cancelada.');
+    }
+
+    const taxRateDecimal =
+      dto.taxRate !== undefined ? dto.taxRate / 100 : Number(sale.taxRate);
+
+    const updateData: any = {};
+    if (dto.customerId !== undefined) updateData.customerId = dto.customerId;
+    if (dto.sellerId !== undefined) updateData.sellerId = dto.sellerId;
+    if (dto.partnerId !== undefined) updateData.partnerId = dto.partnerId || null;
+    if (dto.employeeId !== undefined) updateData.employeeId = dto.employeeId || null;
+    if (dto.origin !== undefined) updateData.origin = dto.origin;
+    if (dto.taxRate !== undefined) updateData.taxRate = taxRateDecimal;
+    if (dto.saleDate !== undefined) updateData.saleDate = new Date(dto.saleDate);
+    if (dto.contractDate !== undefined) updateData.contractDate = dto.contractDate ? new Date(dto.contractDate) : null;
+    if (dto.billingStartDate !== undefined) updateData.billingStartDate = dto.billingStartDate ? new Date(dto.billingStartDate) : null;
+    if (dto.notes !== undefined) updateData.notes = dto.notes;
+    if (dto.status !== undefined) {
+      updateData.status = dto.status;
+      if (dto.status === SaleStatus.CANCELLED) updateData.cancelledAt = new Date();
+    }
+
+    // Se há novos itens, cancela comissões previstas e recria os itens
+    if (dto.items !== undefined) {
+      if (dto.items.length === 0) {
+        throw new BadRequestException('A venda deve ter pelo menos um item (produto).');
+      }
+
+      // Cancela comissões PREDICTED para recalcular
+      await this.engine.cancelSaleCommissions(
+        tenantId, id,
+        'Venda editada — itens atualizados, recalculando comissões',
+        userId,
+      );
+
+      // Deleta itens existentes e cria os novos
+      await this.prisma.saleItem.deleteMany({ where: { saleId: id } });
+
+      updateData.items = {
+        create: dto.items.map((item) => ({
+          productId: item.productId,
+          type: item.type,
+          grossValue: item.grossValue,
+          netValue: parseFloat((item.grossValue * (1 - taxRateDecimal)).toFixed(2)),
+          taxRate: taxRateDecimal,
+          quantity: item.quantity || 1,
+          notes: item.notes,
+        })),
+      };
+    }
+
+    const updated = await this.prisma.sale.update({
+      where: { id },
+      data: updateData,
+      include: {
+        items: { include: { product: true } },
+        customer: true,
+        seller: true,
+        partner: true,
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'UPDATE',
+      entity: 'sale',
+      entityId: id,
+      previousData: sale,
+      newData: dto,
+    });
+
+    // Se itens foram atualizados, roda o motor de comissão novamente
+    if (dto.items !== undefined) {
+      setImmediate(() => {
+        this.engine.processSale({ tenantId, saleId: id, triggeredBy: userId });
+      });
+    }
+
+    // Se cancelada via edição, cancela comissões
+    if (dto.status === SaleStatus.CANCELLED || dto.status === SaleStatus.DEFAULTING) {
+      await this.engine.cancelSaleCommissions(
+        tenantId, id,
+        dto.status === SaleStatus.CANCELLED ? 'Venda cancelada' : 'Inadimplência',
+        userId,
+      );
+    }
+
+    return updated;
   }
 
   async findAll(tenantId: string, filters: {
@@ -179,7 +299,6 @@ export class SalesService {
       newData: { status, reason },
     });
 
-    // Se cancelado, cancela comissões previstas
     if (status === SaleStatus.CANCELLED || status === SaleStatus.DEFAULTING) {
       await this.engine.cancelSaleCommissions(
         tenantId, saleId,
@@ -195,10 +314,8 @@ export class SalesService {
     const sale = await this.prisma.sale.findFirst({ where: { id: dto.saleId, tenantId } });
     if (!sale) throw new NotFoundException();
 
-    // Cria ou atualiza fatura
     await this.prisma.invoice.upsert({
       where: {
-        // findFirst fallback se não tiver unique composto
         id: `${dto.saleId}-${dto.installmentNum}`,
       },
       create: {
@@ -227,7 +344,6 @@ export class SalesService {
       newData: dto,
     });
 
-    // Dispara liberação de comissões pelo motor
     await this.engine.processInvoicePaid(tenantId, dto.saleId, dto.installmentNum, userId);
 
     return { message: `Parcela ${dto.installmentNum} registrada. Motor de comissão notificado.` };
