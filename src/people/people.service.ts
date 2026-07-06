@@ -17,6 +17,8 @@ export class PeopleService {
   }
   // Exclusão só permitida se o vendedor não tiver nenhuma venda associada.
   async removeSeller(tenantId: string, id: string) {
+    const seller = await this.prisma.seller.findFirst({ where: { id, tenantId } });
+    if (!seller) throw new NotFoundException('Vendedor não encontrado.');
     const count = await this.prisma.sale.count({ where: { tenantId, sellerId: id } });
     if (count > 0) {
       throw new BadRequestException(
@@ -38,6 +40,8 @@ export class PeopleService {
   }
   // Exclusão só permitida se o parceiro não tiver nenhuma venda associada.
   async removePartner(tenantId: string, id: string) {
+    const partner = await this.prisma.partner.findFirst({ where: { id, tenantId } });
+    if (!partner) throw new NotFoundException('Parceiro não encontrado.');
     const count = await this.prisma.sale.count({ where: { tenantId, partnerId: id } });
     if (count > 0) {
       throw new BadRequestException(
@@ -59,6 +63,8 @@ export class PeopleService {
   }
   // Exclusão só permitida se o colaborador não tiver nenhuma venda associada.
   async removeEmployee(tenantId: string, id: string) {
+    const employee = await this.prisma.employee.findFirst({ where: { id, tenantId } });
+    if (!employee) throw new NotFoundException('Colaborador não encontrado.');
     const count = await this.prisma.sale.count({ where: { tenantId, employeeId: id } });
     if (count > 0) {
       throw new BadRequestException(
