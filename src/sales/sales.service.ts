@@ -310,6 +310,37 @@ export class SalesService {
     return updated;
   }
 
+  // Exclusão só é permitida se a venda não tiver nenhuma comissão já paga.
+  // Caso contrário, orienta a cancelar a venda em vez de excluir (preserva histórico financeiro).
+  async remove(tenantId: string, id: string, userId: string) {
+    const sale = await this.prisma.sale.findFirst({ where: { id, tenantId } });
+    if (!sale) throw new NotFoundException('Venda não encontrada.');
+
+    const paidCount = await this.prisma.commission.count({
+      where: { tenantId, saleId: id, status: 'PAID' },
+    });
+    if (paidCount > 0) {
+      throw new BadRequestException(
+        'Esta venda possui comissões já pagas e não pode ser excluída. Cancele a venda em vez de excluir.',
+      );
+    }
+
+    await this.prisma.commission.deleteMany({ where: { tenantId, saleId: id } });
+    await this.prisma.invoice.deleteMany({ where: { tenantId, saleId: id } });
+    await this.prisma.sale.delete({ where: { id } });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'DELETE',
+      entity: 'sale',
+      entityId: id,
+      previousData: sale,
+    });
+
+    return { message: 'Venda excluída com sucesso.' };
+  }
+
   async registerInvoicePayment(tenantId: string, dto: RegisterInvoicePaymentDto, userId: string) {
     const sale = await this.prisma.sale.findFirst({ where: { id: dto.saleId, tenantId } });
     if (!sale) throw new NotFoundException();

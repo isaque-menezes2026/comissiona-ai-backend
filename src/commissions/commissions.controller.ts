@@ -19,4 +19,7 @@ export class CommissionsController {
   @Post('process-invoice') processInvoice(@Request() req, @Body() body: any) {
     return this.svc.processInvoice(req.user.tenantId, body, req.user.id);
   }
+  @Patch('mark-paid') markPaid(@Request() req, @Body() body: { ids: string[] }) {
+    return this.svc.markPaid(req.user.tenantId, body.ids, req.user.id);
+  }
 }

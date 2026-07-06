@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SalesService, CreateSaleDto, UpdateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
@@ -33,6 +33,11 @@ export class SalesController {
   @Patch(':id/status')
   updateStatus(@Request() req, @Param('id') id: string, @Body() body: { status: any; reason?: string }) {
     return this.sales.updateStatus(req.user.tenantId, id, body.status, req.user.id, body.reason);
+  }
+
+  @Delete(':id')
+  remove(@Request() req, @Param('id') id: string) {
+    return this.sales.remove(req.user.tenantId, id, req.user.id);
   }
 
   @Post('invoices/payment')

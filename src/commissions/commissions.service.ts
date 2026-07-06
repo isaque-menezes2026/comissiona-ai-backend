@@ -73,4 +73,38 @@ export class CommissionsService {
     await this.engine.processInvoicePaid(tenantId, dto.saleId, dto.installmentNum, userId);
     return { message: 'Parcela ' + dto.installmentNum + ' processada com sucesso' };
   }
+
+  // Marca uma ou mais comissões diretamente como PAGA, sem passar pelo fluxo de fatura/parcela.
+  // Ignora silenciosamente ids que já estão PAID/CANCELLED (não elegíveis).
+  async markPaid(tenantId: string, ids: string[], userId: string) {
+    if (!ids || ids.length === 0) {
+      return { message: 'Nenhuma comissão selecionada.', count: 0 };
+    }
+
+    const commissions = await this.prisma.commission.findMany({
+      where: { tenantId, id: { in: ids } },
+    });
+    const eligibleIds = commissions
+      .filter((c) => c.status !== 'PAID' && c.status !== 'CANCELLED')
+      .map((c) => c.id);
+
+    if (eligibleIds.length === 0) {
+      return { message: 'Nenhuma das comissões selecionadas é elegível para pagamento.', count: 0 };
+    }
+
+    await this.prisma.commission.updateMany({
+      where: { tenantId, id: { in: eligibleIds } },
+      data: { status: 'PAID', paidAt: new Date() },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'COMMISSIONS_MARKED_PAID',
+      entity: 'commission',
+      metadata: { ids: eligibleIds, count: eligibleIds.length },
+    });
+
+    return { message: `${eligibleIds.length} comissão(ões) marcada(s) como paga(s).`, count: eligibleIds.length };
+  }
 }

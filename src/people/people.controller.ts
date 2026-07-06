@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Request, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { PeopleService } from './people.service';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -13,15 +13,18 @@ export class PeopleController {
   @Get('sellers') findSellers(@Request() req) { return this.svc.findAllSellers(req.user.tenantId); }
   @Post('sellers') createSeller(@Request() req, @Body() body: any) { return this.svc.createSeller(req.user.tenantId, body); }
   @Patch('sellers/:id') updateSeller(@Request() req, @Param('id') id: string, @Body() body: any) { return this.svc.updateSeller(req.user.tenantId, id, body); }
+  @Delete('sellers/:id') removeSeller(@Request() req, @Param('id') id: string) { return this.svc.removeSeller(req.user.tenantId, id); }
 
   @Get('partners') findPartners(@Request() req) { return this.svc.findAllPartners(req.user.tenantId); }
   @Post('partners') createPartner(@Request() req, @Body() body: any) { return this.svc.createPartner(req.user.tenantId, body); }
   @Patch('partners/:id') updatePartner(@Request() req, @Param('id') id: string, @Body() body: any) { return this.svc.updatePartner(req.user.tenantId, id, body); }
+  @Delete('partners/:id') removePartner(@Request() req, @Param('id') id: string) { return this.svc.removePartner(req.user.tenantId, id); }
 
   @Get('employees') findEmployees(@Request() req) { return this.svc.findAllEmployees(req.user.tenantId); }
   @Post('employees') createEmployee(@Request() req, @Body() body: any) { return
 this.svc.createEmployee(req.user.tenantId, body); }
   @Patch('employees/:id') updateEmployee(@Request() req, @Param('id') id: string, @Body() body: any) { return this.svc.updateEmployee(req.user.tenantId, id, body); }
+  @Delete('employees/:id') removeEmployee(@Request() req, @Param('id') id: string) { return this.svc.removeEmployee(req.user.tenantId, id); }
 
   @Get('ranking') getRanking(@Request() req, @Query('month') month: string) {
     return this.svc.getRanking(req.user.tenantId, month || new Date().toISOString().slice(0, 7));

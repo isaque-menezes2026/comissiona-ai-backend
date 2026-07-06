@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
 
@@ -15,6 +15,17 @@ export class PeopleService {
   async updateSeller(tenantId: string, id: string, dto: any) {
     return this.prisma.seller.update({ where: { id }, data: dto });
   }
+  // Exclusão só permitida se o vendedor não tiver nenhuma venda associada.
+  async removeSeller(tenantId: string, id: string) {
+    const count = await this.prisma.sale.count({ where: { tenantId, sellerId: id } });
+    if (count > 0) {
+      throw new BadRequestException(
+        'Este vendedor possui vendas associadas e não pode ser excluído. Marque como "Inativo" em vez de excluir.',
+      );
+    }
+    await this.prisma.seller.delete({ where: { id } });
+    return { message: 'Vendedor excluído com sucesso.' };
+  }
 
   async findAllPartners(tenantId: string) {
     return this.prisma.partner.findMany({ where: { tenantId }, orderBy: { name: 'asc' } });
@@ -25,6 +36,17 @@ export class PeopleService {
   async updatePartner(tenantId: string, id: string, dto: any) {
     return this.prisma.partner.update({ where: { id }, data: dto });
   }
+  // Exclusão só permitida se o parceiro não tiver nenhuma venda associada.
+  async removePartner(tenantId: string, id: string) {
+    const count = await this.prisma.sale.count({ where: { tenantId, partnerId: id } });
+    if (count > 0) {
+      throw new BadRequestException(
+        'Este parceiro possui vendas associadas e não pode ser excluído. Marque como "Inativo" em vez de excluir.',
+      );
+    }
+    await this.prisma.partner.delete({ where: { id } });
+    return { message: 'Parceiro excluído com sucesso.' };
+  }
 
   async findAllEmployees(tenantId: string) {
     return this.prisma.employee.findMany({ where: { tenantId }, orderBy: { name: 'asc' } });
@@ -34,6 +56,17 @@ export class PeopleService {
   }
   async updateEmployee(tenantId: string, id: string, dto: any) {
     return this.prisma.employee.update({ where: { id }, data: dto });
+  }
+  // Exclusão só permitida se o colaborador não tiver nenhuma venda associada.
+  async removeEmployee(tenantId: string, id: string) {
+    const count = await this.prisma.sale.count({ where: { tenantId, employeeId: id } });
+    if (count > 0) {
+      throw new BadRequestException(
+        'Este colaborador possui vendas associadas e não pode ser excluído. Marque como "Inativo" em vez de excluir.',
+      );
+    }
+    await this.prisma.employee.delete({ where: { id } });
+    return { message: 'Colaborador excluído com sucesso.' };
   }
 
   async getRanking(tenantId: string, month: string) {
