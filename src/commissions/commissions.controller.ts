@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CommissionsService } from './commissions.service';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -27,5 +27,8 @@ export class CommissionsController {
   }
   @Patch('fix-origin-scoping') fixOriginScoping(@Request() req) {
     return this.svc.fixOriginScoping(req.user.tenantId);
+  }
+  @Delete(':id') remove(@Request() req, @Param('id') id: string) {
+    return this.svc.remove(req.user.tenantId, id, req.user.id);
   }
 }

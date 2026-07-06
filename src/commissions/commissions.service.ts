@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CommissionEngineService } from '../commission-engine/commission-engine.service';
@@ -53,6 +53,26 @@ export class CommissionsService {
       take: 10,
     });
     return { predicted, released, paid, thisMonth, recent };
+  }
+
+  // Exclusão definitiva de uma comissão. Só permitida se ela NÃO estiver paga
+  // (comissão paga precisa ficar no histórico). Usado para remover comissões
+  // criadas por erro de configuração de regra (ex: regra sem restrição de
+  // origem gerando cobrança duplicada) — o cancelamento sozinho mantém a
+  // linha na tela; aqui de fato some da lista.
+  async remove(tenantId: string, id: string, userId: string) {
+    const c = await this.prisma.commission.findFirst({ where: { id, tenantId } });
+    if (!c) throw new NotFoundException('Comissão não encontrada.');
+    if (c.status === 'PAID') {
+      throw new BadRequestException('Esta comissão já foi paga e não pode ser excluída. Comissões pagas ficam no histórico.');
+    }
+    const paymentItemCount = await this.prisma.paymentItem.count({ where: { commissionId: id } });
+    if (paymentItemCount > 0) {
+      throw new BadRequestException('Esta comissão já está vinculada a um lote de pagamento e não pode ser excluída.');
+    }
+    await this.prisma.commission.delete({ where: { id } });
+    await this.audit.log({ tenantId, userId, action: 'DELETE', entity: 'commission', entityId: id, previousData: c });
+    return { message: 'Comissão excluída com sucesso.' };
   }
 
   async cancel(tenantId: string, id: string, reason: string, userId: string) {
