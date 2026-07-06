@@ -328,8 +328,36 @@ export class CommissionEngineService {
         break;
       case CommissionType.FIXED_AMOUNT:
         avgDays = rule.appliesAfterDays || 15;
-        reason = 'Contrato convertido / faturado';
-        forecastStatus = 'awaiting_contract';
+        // O texto refletia sempre "conversão do contrato", mesmo quando o gatilho
+        // real da regra era outro (ex: 1ª fatura paga). Ajustado para refletir o
+        // triggerEvent de fato configurado na regra.
+        switch (rule.triggerEvent as TriggerEvent) {
+          case TriggerEvent.FIRST_INVOICE_PAID:
+            reason = 'Aguardando 1ª fatura ser paga';
+            forecastStatus = 'awaiting_first_payment';
+            break;
+          case TriggerEvent.THIRD_INVOICE_PAID:
+            reason = 'Aguardando 3ª fatura ser paga';
+            forecastStatus = 'awaiting_third_payment';
+            break;
+          case TriggerEvent.INVOICE_ISSUED:
+            reason = 'Aguardando faturamento';
+            forecastStatus = 'awaiting_billing';
+            break;
+          case TriggerEvent.CONTRACT_SIGNED:
+            reason = 'Aguardando faturamento (contrato já assinado)';
+            forecastStatus = 'awaiting_billing';
+            break;
+          case TriggerEvent.MANUAL_APPROVAL:
+            reason = 'Aguardando aprovação manual';
+            forecastStatus = 'awaiting_approval';
+            break;
+          case TriggerEvent.INVOICE_PAID:
+          default:
+            reason = 'Aguardando fatura ser paga';
+            forecastStatus = 'awaiting_billing';
+            break;
+        }
         break;
     }
 
@@ -458,6 +486,31 @@ export class CommissionEngineService {
     });
 
     return result;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // MANUTENÇÃO: atualiza apenas o texto/status de previsão de comissões já
+  // existentes (PREDICTED/BLOCKED), sem alterar valor, status real ou datas.
+  // Usado após correções no texto do forecastReason (ex: gatilho real da regra).
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async refreshForecastText(tenantId: string) {
+    const commissions = await this.prisma.commission.findMany({
+      where: { tenantId, status: { in: [CommissionStatus.PREDICTED, CommissionStatus.BLOCKED] } },
+      include: { rule: true, sale: true },
+    });
+
+    let updated = 0;
+    for (const c of commissions) {
+      const forecast = this.calculateForecast(c.sale, c.rule);
+      await this.prisma.commission.update({
+        where: { id: c.id },
+        data: { forecastReason: forecast.reason, forecastStatus: forecast.forecastStatus },
+      });
+      updated++;
+    }
+
+    return { message: `${updated} comissão(ões) com texto de previsão atualizado.`, count: updated };
   }
 
   // ──────────────────────────────────────────────────────────────────────────

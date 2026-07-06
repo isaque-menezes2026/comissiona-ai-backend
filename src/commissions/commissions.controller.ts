@@ -22,4 +22,7 @@ export class CommissionsController {
   @Patch('mark-paid') markPaid(@Request() req, @Body() body: { ids: string[] }) {
     return this.svc.markPaid(req.user.tenantId, body.ids, req.user.id);
   }
+  @Patch('refresh-forecast-text') refreshForecastText(@Request() req) {
+    return this.svc.refreshForecastText(req.user.tenantId);
+  }
 }

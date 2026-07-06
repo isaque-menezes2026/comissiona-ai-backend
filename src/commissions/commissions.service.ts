@@ -65,6 +65,14 @@ export class CommissionsService {
     return updated;
   }
 
+  // Recalcula apenas o texto de previsão (forecastReason/forecastStatus) das
+  // comissões já existentes, sem mexer em valor/status/datas. Usado uma vez
+  // após corrigir o texto que era genérico ("Contrato convertido/faturado")
+  // para refletir o gatilho real da regra.
+  async refreshForecastText(tenantId: string) {
+    return this.engine.refreshForecastText(tenantId);
+  }
+
   async processInvoice(tenantId: string, dto: { saleId: string; installmentNum: number; paidAmount: number; paidAt?: string }, userId: string) {
     await this.prisma.invoice.updateMany({
       where: { tenantId, saleId: dto.saleId, installmentNum: dto.installmentNum },
