@@ -73,6 +73,20 @@ export class CommissionsService {
     return this.engine.refreshForecastText(tenantId);
   }
 
+  // Corrige regras de comissão recorrente/percentual do vendedor que estavam
+  // sem restrição de origem (valiam também para vendas de parceiro/colaborador,
+  // pagando o vendedor duas vezes pela mesma venda) e cancela as comissões já
+  // criadas que ficaram indevidas por causa disso.
+  async fixOriginScoping(tenantId: string) {
+    const rulesUpdated = await this.engine.restrictRecurringRulesToDirectOrigin(tenantId);
+    const commissionsCancelled = await this.engine.reconcilePendingCommissions(tenantId);
+    return {
+      message: `${rulesUpdated} regra(s) restrita(s) a venda direta. ${commissionsCancelled} comissão(ões) indevida(s) cancelada(s).`,
+      rulesUpdated,
+      commissionsCancelled,
+    };
+  }
+
   async processInvoice(tenantId: string, dto: { saleId: string; installmentNum: number; paidAmount: number; paidAt?: string }, userId: string) {
     await this.prisma.invoice.updateMany({
       where: { tenantId, saleId: dto.saleId, installmentNum: dto.installmentNum },

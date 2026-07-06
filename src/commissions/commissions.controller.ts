@@ -25,4 +25,7 @@ export class CommissionsController {
   @Patch('refresh-forecast-text') refreshForecastText(@Request() req) {
     return this.svc.refreshForecastText(req.user.tenantId);
   }
+  @Patch('fix-origin-scoping') fixOriginScoping(@Request() req) {
+    return this.svc.fixOriginScoping(req.user.tenantId);
+  }
 }

@@ -489,6 +489,85 @@ export class CommissionEngineService {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
+  // CORREÇÃO: regras padrão de comissão recorrente/percentual do vendedor
+  // (ex: "Kualiz Base - 3a Mensalidade (100%)") foram cadastradas sem
+  // restrição de origem (saleOrigin null), então valiam pra QUALQUER venda —
+  // inclusive vendas vindas de indicação de parceiro/colaborador, que já têm
+  // suas próprias regras fixas dedicadas (ex: parceiro recebe R$1.000/1a
+  // mensalidade, vendedor recebe R$50/R$80 fixo pela conversão).
+  // Resultado: o vendedor era pago DUAS vezes pela mesma venda de parceiro —
+  // o fixo de conversão E a comissão recorrente completa que era só pra
+  // venda direta. Esta correção restringe essas regras a saleOrigin='direct'.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async restrictRecurringRulesToDirectOrigin(tenantId: string) {
+    const result = await this.prisma.commissionRule.updateMany({
+      where: {
+        tenantId,
+        beneficiaryType: BeneficiaryType.SELLER,
+        commissionType: {
+          in: [
+            CommissionType.PERCENTAGE_IMPLANTATION,
+            CommissionType.PERCENTAGE_MONTHLY,
+            CommissionType.THIRD_MONTHLY_PAYMENT,
+            CommissionType.RECURRING,
+          ],
+        },
+        saleOrigin: null,
+      },
+      data: { saleOrigin: 'direct' },
+    });
+    return result.count;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // RECONCILIAÇÃO: depois de corrigir o escopo das regras acima, comissões já
+  // criadas (ainda PREDICTED/BLOCKED) que não se encaixam mais na regra
+  // (origem diferente, beneficiário sem parceiro/colaborador vinculado, ou
+  // regra desativada) são canceladas. Não mexe em comissões já RELEASED,
+  // PAID ou CANCELLED — só limpa o que ainda está pendente e ficou indevido.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async reconcilePendingCommissions(tenantId: string) {
+    const commissions = await this.prisma.commission.findMany({
+      where: { tenantId, status: { in: [CommissionStatus.PREDICTED, CommissionStatus.BLOCKED] } },
+      include: { rule: true, sale: true },
+    });
+
+    let cancelled = 0;
+    for (const c of commissions) {
+      const rule = c.rule;
+      const sale = c.sale;
+      if (!rule || !sale) continue;
+
+      const originMatches = !rule.saleOrigin || rule.saleOrigin === 'any' || rule.saleOrigin === sale.origin;
+      const partnerOk = rule.beneficiaryType !== BeneficiaryType.PARTNER || !!sale.partnerId;
+      const employeeOk = rule.beneficiaryType !== BeneficiaryType.EMPLOYEE || !!sale.employeeId;
+      const eligible = originMatches && partnerOk && employeeOk && rule.active;
+
+      if (!eligible) {
+        await this.prisma.commission.update({
+          where: { id: c.id },
+          data: {
+            status: CommissionStatus.CANCELLED,
+            cancelledAt: new Date(),
+            cancelReason: 'Regra não se aplica mais à origem/beneficiário desta venda (correção de escopo de regra)',
+          },
+        });
+        await this.audit.log({
+          tenantId,
+          action: 'COMMISSION_CANCELLED_RECONCILE',
+          entity: 'commission',
+          entityId: c.id,
+          metadata: { ruleId: rule.id, ruleName: rule.name, saleId: sale.id, saleOrigin: sale.origin },
+        });
+        cancelled++;
+      }
+    }
+    return cancelled;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // MANUTENÇÃO: atualiza apenas o texto/status de previsão de comissões já
   // existentes (PREDICTED/BLOCKED), sem alterar valor, status real ou datas.
   // Usado após correções no texto do forecastReason (ex: gatilho real da regra).
