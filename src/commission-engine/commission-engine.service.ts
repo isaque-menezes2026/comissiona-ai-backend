@@ -144,13 +144,26 @@ export class CommissionEngineService {
     const netValue = Number(item.netValue); // BASE: sempre líquido
 
     switch (rule.commissionType as CommissionType) {
-      case CommissionType.FIXED_AMOUNT:
-        // Valor fixo NÃO desconta impostos (conforme ADENDO)
+      case CommissionType.FIXED_AMOUNT: {
+        const grossFixed = Number(rule.fixedAmount);
+
+        // REGRA GERAL (ADENDO): valor fixo NÃO desconta impostos.
+        // EXCEÇÃO: comissão fixa de PARCEIRO (ex: Kualiz - Parceiro Externo R$1.000)
+        // pode ser configurada para descontar impostos via "appliesOnNetAmount".
+        // Isso não afeta comissões fixas de vendedor/colaborador (indicação, conversão),
+        // que continuam sempre no valor cheio, independente dessa flag.
+        const descontaImposto = rule.beneficiaryType === BeneficiaryType.PARTNER && rule.appliesOnNetAmount;
+        const taxRate = Number(item.taxRate ?? sale.taxRate ?? 0);
+        const amount = descontaImposto
+          ? parseFloat((grossFixed * (1 - taxRate)).toFixed(2))
+          : grossFixed;
+
         return {
-          amount: Number(rule.fixedAmount),
-          baseValue: null,
+          amount,
+          baseValue: descontaImposto ? grossFixed : null,
           isFixed: true,
         };
+      }
 
       case CommissionType.PERCENTAGE_IMPLANTATION:
         if (item.type !== 'IMPLANTATION') return null;
