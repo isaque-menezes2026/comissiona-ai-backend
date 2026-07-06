@@ -12,12 +12,23 @@ export class GoalsController {
 
   @Get()
   findAll(@Request() req, @Query() q: any) {
-    return this.svc.findAll(req.user.tenantId, q);
+    return this.svc.findAll(req.user.tenantId, { ...q, includeInactive: q.includeInactive === 'true' });
   }
 
   @Get('progress')
   progress(@Request() req, @Query('periodType') periodType: string, @Query('periodKey') periodKey: string) {
     return this.svc.getProgress(req.user.tenantId, periodType || 'monthly', periodKey || new Date().toISOString().slice(0, 7));
+  }
+
+  @Get('history')
+  history(@Request() req, @Query() q: any) {
+    return this.svc.getHistory(req.user.tenantId, {
+      periodType: q.periodType || 'monthly',
+      periodKey: q.periodKey || new Date().toISOString().slice(0, 7),
+      productId: q.productId || undefined,
+      sellerId: q.sellerId || undefined,
+      count: q.count ? Number(q.count) : undefined,
+    });
   }
 
   @Post() create(@Request() req, @Body() body: any) { return this.svc.create(req.user.tenantId, body); }

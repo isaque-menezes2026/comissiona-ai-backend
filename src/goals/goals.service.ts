@@ -43,15 +43,65 @@ function getPeriodRange(periodType: string, periodKey: string): { start: Date; e
   return { start, end };
 }
 
+// Gera os N periodKeys anteriores (incluindo o atual), do mais antigo pro mais
+// recente, para montar a evolução histórica de uma meta por período.
+function previousPeriodKeys(periodType: string, periodKey: string, count: number): string[] {
+  const keys: string[] = [];
+  if (periodType === 'monthly') {
+    let [y, m] = periodKey.split('-').map(Number);
+    for (let i = count - 1; i >= 0; i--) {
+      let yy = y, mm = m - i;
+      while (mm < 1) { mm += 12; yy -= 1; }
+      keys.push(`${yy}-${String(mm).padStart(2, '0')}`);
+    }
+    return keys;
+  }
+  if (periodType === 'yearly') {
+    const y = Number(periodKey);
+    for (let i = count - 1; i >= 0; i--) keys.push(`${y - i}`);
+    return keys;
+  }
+  if (periodType === 'quarterly') {
+    let [y, q] = periodKey.split('-Q').map(Number);
+    for (let i = count - 1; i >= 0; i--) {
+      let yy = y, qq = q - i;
+      while (qq < 1) { qq += 4; yy -= 1; }
+      keys.push(`${yy}-Q${qq}`);
+    }
+    return keys;
+  }
+  if (periodType === 'semiannual') {
+    let [y, h] = periodKey.split('-H').map(Number);
+    for (let i = count - 1; i >= 0; i--) {
+      let yy = y, hh = h - i;
+      while (hh < 1) { hh += 2; yy -= 1; }
+      keys.push(`${yy}-H${hh}`);
+    }
+    return keys;
+  }
+  if (periodType === 'weekly') {
+    const [y, w] = periodKey.replace('W', '-').split('-').map(Number);
+    for (let i = count - 1; i >= 0; i--) {
+      let ww = w - i;
+      // Simplificação: não cruza virada de ano dentro da janela pedida.
+      if (ww < 1) ww = 1;
+      keys.push(`${y}-W${ww}`);
+    }
+    return keys;
+  }
+  return [periodKey];
+}
+
 @Injectable()
 export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(tenantId: string, filters: { periodType?: string; periodKey?: string; productId?: string } = {}) {
+  async findAll(tenantId: string, filters: { periodType?: string; periodKey?: string; productId?: string; includeInactive?: boolean } = {}) {
     const where: any = { tenantId };
     if (filters.periodType) where.periodType = filters.periodType;
     if (filters.periodKey) where.periodKey = filters.periodKey;
     if (filters.productId) where.productId = filters.productId;
+    if (!filters.includeInactive) where.active = true;
     return this.prisma.goal.findMany({
       where,
       include: {
@@ -62,12 +112,57 @@ export class GoalsService {
     });
   }
 
+  // Desativa metas existentes que ocupam o mesmo "slot" (mesmo produto,
+  // vendedor, tipo de período e período) antes de criar/mover uma nova meta
+  // para lá — evita duplicidade de metas ativas para o mesmo escopo.
+  private async deactivateConflicting(tenantId: string, dto: any, excludeId?: string) {
+    const where: any = {
+      tenantId,
+      active: true,
+      periodType: dto.periodType,
+      periodKey: dto.periodKey,
+      productId: dto.productId || null,
+      sellerId: dto.sellerId || null,
+    };
+    if (excludeId) where.id = { not: excludeId };
+    await this.prisma.goal.updateMany({ where, data: { active: false } });
+  }
+
   async create(tenantId: string, dto: any) {
-    return this.prisma.goal.create({ data: { ...dto, tenantId } });
+    if (dto.active !== false) {
+      await this.deactivateConflicting(tenantId, dto);
+    }
+    return this.prisma.goal.create({
+      data: {
+        ...dto,
+        tenantId,
+        active: dto.active !== false,
+        startDate: dto.startDate ? new Date(dto.startDate) : null,
+        endDate: dto.endDate ? new Date(dto.endDate) : null,
+      },
+    });
   }
 
   async update(tenantId: string, id: string, dto: any) {
-    return this.prisma.goal.update({ where: { id }, data: dto });
+    const data: any = { ...dto };
+    if (dto.startDate !== undefined) data.startDate = dto.startDate ? new Date(dto.startDate) : null;
+    if (dto.endDate !== undefined) data.endDate = dto.endDate ? new Date(dto.endDate) : null;
+
+    // Se a edição move a meta pra outro produto/período/vendedor (ou a
+    // reativa), desativa qualquer outra meta que já ocupe esse slot.
+    if (dto.active !== false && (dto.periodType || dto.periodKey || dto.productId !== undefined || dto.sellerId !== undefined)) {
+      const current = await this.prisma.goal.findUnique({ where: { id } });
+      if (current) {
+        await this.deactivateConflicting(tenantId, {
+          periodType: dto.periodType ?? current.periodType,
+          periodKey: dto.periodKey ?? current.periodKey,
+          productId: dto.productId !== undefined ? dto.productId : current.productId,
+          sellerId: dto.sellerId !== undefined ? dto.sellerId : current.sellerId,
+        }, id);
+      }
+    }
+
+    return this.prisma.goal.update({ where: { id }, data });
   }
 
   async remove(tenantId: string, id: string) {
@@ -77,8 +172,10 @@ export class GoalsService {
   async getProgress(tenantId: string, periodType: string, periodKey: string) {
     const goals = await this.findAll(tenantId, { periodType, periodKey });
     const { start, end } = getPeriodRange(periodType, periodKey);
+    const now = new Date();
 
     return Promise.all(goals.map(async g => {
+      const isValid = (!g.startDate || g.startDate <= now) && (!g.endDate || g.endDate >= now);
       let achieved = 0;
 
       const saleItemWhere: any = {
@@ -98,7 +195,44 @@ export class GoalsService {
       }
 
       const pct = Number(g.targetValue) > 0 ? (achieved / Number(g.targetValue)) * 100 : 0;
-      return { ...g, achieved, percentage: Math.min(pct, 999) };
+      return { ...g, achieved, percentage: Math.min(pct, 999), isValid };
+    }));
+  }
+
+  // Evolução: retorna o percentual atingido nos últimos N períodos do mesmo
+  // tipo, para o produto/vendedor indicado — inclui metas já inativadas,
+  // pra não perder o histórico quando uma meta é substituída por outra.
+  async getHistory(tenantId: string, params: { periodType: string; periodKey: string; productId?: string; sellerId?: string; count?: number }) {
+    const count = params.count && params.count > 0 ? params.count : 6;
+    const keys = previousPeriodKeys(params.periodType, params.periodKey, count);
+
+    return Promise.all(keys.map(async periodKey => {
+      const where: any = { tenantId, periodType: params.periodType, periodKey };
+      if (params.productId) where.productId = params.productId;
+      else where.productId = null;
+      if (params.sellerId) where.sellerId = params.sellerId;
+
+      const goal = await this.prisma.goal.findFirst({ where, orderBy: { createdAt: 'desc' } });
+      if (!goal) return { periodKey, hasGoal: false, achieved: 0, targetValue: 0, percentage: 0 };
+
+      const { start, end } = getPeriodRange(params.periodType, periodKey);
+      const saleItemWhere: any = {
+        sale: { tenantId, saleDate: { gte: start, lte: end }, status: { not: 'CANCELLED' } },
+      };
+      if (goal.productId) saleItemWhere.productId = goal.productId;
+      if (goal.sellerId) saleItemWhere.sale.sellerId = goal.sellerId;
+
+      let achieved = 0;
+      if (goal.type === 'quantity') {
+        achieved = await this.prisma.saleItem.count({ where: saleItemWhere });
+      } else {
+        const agg = await this.prisma.saleItem.aggregate({ where: saleItemWhere, _sum: { grossValue: true } });
+        achieved = Number(agg._sum?.grossValue || 0);
+      }
+
+      const target = Number(goal.targetValue);
+      const percentage = target > 0 ? Math.min((achieved / target) * 100, 999) : 0;
+      return { periodKey, hasGoal: true, achieved, targetValue: target, percentage, active: goal.active };
     }));
   }
 }
