@@ -34,4 +34,9 @@ export class GoalsController {
   @Post() create(@Request() req, @Body() body: any) { return this.svc.create(req.user.tenantId, body); }
   @Patch(':id') update(@Request() req, @Param('id') id: string, @Body() body: any) { return this.svc.update(req.user.tenantId, id, body); }
   @Delete(':id') remove(@Request() req, @Param('id') id: string) { return this.svc.remove(req.user.tenantId, id); }
+
+  @Post(':id/duplicate')
+  duplicate(@Request() req, @Param('id') id: string, @Body() body: { periodKeys: string[] }) {
+    return this.svc.duplicate(req.user.tenantId, id, body.periodKeys || []);
+  }
 }

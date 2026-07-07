@@ -169,6 +169,46 @@ export class GoalsService {
     return this.prisma.goal.delete({ where: { id } });
   }
 
+  // Duplica uma meta existente para vários períodos de destino de uma vez
+  // (ex: replicar a meta de julho para agosto, setembro e outubro), evitando
+  // que o usuário precise recriar manualmente mês a mês. Cada período de
+  // destino segue a mesma regra de "inativar conflitante" do create/update.
+  async duplicate(tenantId: string, id: string, periodKeys: string[]) {
+    const source = await this.prisma.goal.findFirst({ where: { id, tenantId } });
+    if (!source) throw new Error('Meta de origem não encontrada.');
+
+    const targets = [...new Set(periodKeys)].filter(pk => pk && pk !== source.periodKey);
+    const created = [];
+    for (const periodKey of targets) {
+      await this.deactivateConflicting(tenantId, {
+        periodType: source.periodType,
+        periodKey,
+        productId: source.productId,
+        sellerId: source.sellerId,
+      });
+      const goal = await this.prisma.goal.create({
+        data: {
+          tenantId,
+          productId: source.productId,
+          sellerId: source.sellerId,
+          teamName: source.teamName,
+          periodType: source.periodType,
+          periodKey,
+          type: source.type,
+          targetValue: source.targetValue,
+          bonusAmount: source.bonusAmount,
+          bonusPercentage: source.bonusPercentage,
+          startDate: source.startDate,
+          endDate: source.endDate,
+          notes: source.notes,
+          active: true,
+        },
+      });
+      created.push(goal);
+    }
+    return { count: created.length, goals: created };
+  }
+
   async getProgress(tenantId: string, periodType: string, periodKey: string) {
     const goals = await this.findAll(tenantId, { periodType, periodKey });
     const { start, end } = getPeriodRange(periodType, periodKey);
