@@ -92,6 +92,22 @@ function previousPeriodKeys(periodType: string, periodKey: string, count: number
   return [periodKey];
 }
 
+// Lista os periodKeys mensais ('YYYY-MM') contidos num intervalo de datas —
+// usado para compor trimestre/semestre/ano a partir das metas mensais.
+function monthlyKeysInRange(start: Date, end: Date): string[] {
+  const keys: string[] = [];
+  let y = start.getFullYear();
+  let m = start.getMonth();
+  const endY = end.getFullYear();
+  const endM = end.getMonth();
+  while (y < endY || (y === endY && m <= endM)) {
+    keys.push(`${y}-${String(m + 1).padStart(2, '0')}`);
+    m++;
+    if (m > 11) { m = 0; y++; }
+  }
+  return keys;
+}
+
 @Injectable()
 export class GoalsService {
   constructor(private prisma: PrismaService) {}
@@ -209,34 +225,99 @@ export class GoalsService {
     return { count: created.length, goals: created };
   }
 
+  private async computeAchieved(tenantId: string, g: { productId?: string | null; sellerId?: string | null; type: string }, start: Date, end: Date) {
+    const saleItemWhere: any = {
+      sale: { tenantId, saleDate: { gte: start, lte: end }, status: { not: 'CANCELLED' } },
+    };
+    if (g.productId) saleItemWhere.productId = g.productId;
+    if (g.sellerId) saleItemWhere.sale.sellerId = g.sellerId;
+
+    if (g.type === 'quantity') {
+      return this.prisma.saleItem.count({ where: saleItemWhere });
+    }
+    const agg = await this.prisma.saleItem.aggregate({ where: saleItemWhere, _sum: { grossValue: true } });
+    return Number(agg._sum?.grossValue || 0);
+  }
+
+  // Metas trimestrais/semestrais/anuais que não foram definidas manualmente
+  // são "compostas" ao vivo somando as metas mensais (mesmo produto/vendedor)
+  // que caem dentro do período — sem duplicar nada no banco. Se existir uma
+  // meta explícita para aquele produto/vendedor no período maior, ela vale
+  // (a composição automática só entra como substituto, não sobrepõe).
+  private async getComposedGoals(tenantId: string, periodType: string, periodKey: string, explicitGoals: any[]) {
+    if (!['quarterly', 'semiannual', 'yearly'].includes(periodType)) return [];
+
+    const { start, end } = getPeriodRange(periodType, periodKey);
+    const monthKeys = monthlyKeysInRange(start, end);
+
+    const monthlyGoals = await this.prisma.goal.findMany({
+      where: { tenantId, periodType: 'monthly', periodKey: { in: monthKeys }, active: true },
+      include: {
+        seller: { select: { id: true, name: true } },
+        product: { select: { id: true, name: true, color: true } },
+      },
+    });
+
+    const explicitSlots = new Set(explicitGoals.map(g => `${g.productId || 'null'}|${g.sellerId || 'null'}|${g.type}`));
+    const groups = new Map<string, any[]>();
+    for (const mg of monthlyGoals) {
+      const slot = `${mg.productId || 'null'}|${mg.sellerId || 'null'}|${mg.type}`;
+      if (explicitSlots.has(slot)) continue; // meta manual já cobre esse slot
+      if (!groups.has(slot)) groups.set(slot, []);
+      groups.get(slot)!.push(mg);
+    }
+
+    const now = new Date();
+    return Promise.all([...groups.entries()].map(async ([slot, monthGoals]) => {
+      const sample = monthGoals[0];
+      const targetValue = monthGoals.reduce((sum, m) => sum + Number(m.targetValue), 0);
+      const achieved = await this.computeAchieved(tenantId, sample, start, end);
+      const pct = targetValue > 0 ? (achieved / targetValue) * 100 : 0;
+      return {
+        id: `composed-${slot}-${periodKey}`,
+        tenantId,
+        productId: sample.productId,
+        product: sample.product,
+        sellerId: sample.sellerId,
+        seller: sample.seller,
+        teamName: sample.teamName,
+        periodType,
+        periodKey,
+        type: sample.type,
+        targetValue,
+        achievedValue: 0,
+        bonusAmount: null,
+        bonusPercentage: null,
+        startDate: null,
+        endDate: null,
+        active: true,
+        notes: null,
+        createdAt: now,
+        updatedAt: now,
+        achieved,
+        percentage: Math.min(pct, 999),
+        isValid: true,
+        isComposed: true,
+        composedFromMonths: monthGoals.length,
+        composedTotalMonths: monthKeys.length,
+      };
+    }));
+  }
+
   async getProgress(tenantId: string, periodType: string, periodKey: string) {
     const goals = await this.findAll(tenantId, { periodType, periodKey });
     const { start, end } = getPeriodRange(periodType, periodKey);
     const now = new Date();
 
-    return Promise.all(goals.map(async g => {
+    const explicitResults = await Promise.all(goals.map(async g => {
       const isValid = (!g.startDate || g.startDate <= now) && (!g.endDate || g.endDate >= now);
-      let achieved = 0;
-
-      const saleItemWhere: any = {
-        sale: { tenantId, saleDate: { gte: start, lte: end }, status: { not: 'CANCELLED' } },
-      };
-      if (g.productId) saleItemWhere.productId = g.productId;
-      if (g.sellerId) saleItemWhere.sale.sellerId = g.sellerId;
-
-      if (g.type === 'quantity') {
-        achieved = await this.prisma.saleItem.count({ where: saleItemWhere });
-      } else {
-        const agg = await this.prisma.saleItem.aggregate({
-          where: saleItemWhere,
-          _sum: { grossValue: true },
-        });
-        achieved = Number(agg._sum?.grossValue || 0);
-      }
-
+      const achieved = await this.computeAchieved(tenantId, g, start, end);
       const pct = Number(g.targetValue) > 0 ? (achieved / Number(g.targetValue)) * 100 : 0;
       return { ...g, achieved, percentage: Math.min(pct, 999), isValid };
     }));
+
+    const composedResults = await this.getComposedGoals(tenantId, periodType, periodKey, goals);
+    return [...explicitResults, ...composedResults];
   }
 
   // Evolução: retorna o percentual atingido nos últimos N períodos do mesmo
