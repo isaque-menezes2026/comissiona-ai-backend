@@ -27,6 +27,28 @@ export interface ExternalSaleItemDto {
   notes?: string;
 }
 
+export interface ExternalCustomerDto {
+  externalId?: string; // id do registro na origem (ex: client.id do kualiz-portal), só para rastreio
+  legalName: string;
+  tradeName?: string;
+  document?: string;
+  segment?: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  state?: string;
+  origin?: string;
+  notes?: string;
+}
+
+export interface ExternalSellerDto {
+  externalId?: string;
+  name: string;
+  email: string;
+  role?: string;
+  active?: boolean;
+}
+
 export interface ExternalSaleDto {
   source: string; // ex: 'kualiz-portal'
   externalRef?: string; // ex: proposal_code, para rastreabilidade nas notas
@@ -193,5 +215,76 @@ export class IntegrationsService {
     );
 
     return { saleId: sale.id, customerId: customer.id, sellerId };
+  }
+
+  // Sincronização automática: cliente criado/editado em sistema externo (ex: kualiz-portal)
+  // vira Customer no Comissiona. Faz upsert (match por documento, senão por nome) para que
+  // criações e edições cheguem no mesmo lugar sem duplicar.
+  async upsertCustomer(dto: ExternalCustomerDto) {
+    if (!dto.legalName) {
+      throw new BadRequestException('legalName é obrigatório.');
+    }
+    const tenantId = await this.getTenantId();
+
+    let customer = dto.document
+      ? await this.prisma.customer.findFirst({ where: { tenantId, document: dto.document } })
+      : null;
+
+    if (!customer) {
+      customer = await this.prisma.customer.findFirst({
+        where: { tenantId, companyName: { equals: dto.legalName, mode: 'insensitive' } },
+      });
+    }
+
+    const data = {
+      tenantId,
+      companyName: dto.legalName,
+      tradeName: dto.tradeName,
+      document: dto.document,
+      segment: dto.segment,
+      email: dto.email,
+      phone: dto.phone,
+      city: dto.city,
+      state: dto.state,
+      origin: dto.origin || 'Venda direta',
+      notes: dto.notes,
+    };
+
+    if (customer) {
+      customer = await this.prisma.customer.update({ where: { id: customer.id }, data });
+      return { customerId: customer.id, action: 'updated' as const };
+    }
+    customer = await this.prisma.customer.create({ data });
+    return { customerId: customer.id, action: 'created' as const };
+  }
+
+  // Sincronização automática: usuário (vendedor/equipe) criado/editado em sistema externo
+  // vira Seller no Comissiona. Upsert por (tenantId, email), que já é chave única no schema.
+  async upsertSeller(dto: ExternalSellerDto) {
+    if (!dto.name || !dto.email) {
+      throw new BadRequestException('name e email são obrigatórios.');
+    }
+    const tenantId = await this.getTenantId();
+    const active = dto.active ?? true;
+
+    const seller = await this.prisma.seller.upsert({
+      where: { tenantId_email: { tenantId, email: dto.email } },
+      update: {
+        name: dto.name,
+        role: dto.role,
+        active,
+        status: active ? 'active' : 'inactive',
+      },
+      create: {
+        tenantId,
+        name: dto.name,
+        email: dto.email,
+        role: dto.role,
+        active,
+        status: active ? 'active' : 'inactive',
+      },
+    });
+
+    return { sellerId: seller.id, action: 'upserted' as const };
   }
 }
