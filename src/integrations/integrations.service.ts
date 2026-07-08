@@ -1,0 +1,197 @@
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../common/prisma/prisma.service';
+import { SalesService } from '../sales/sales.service';
+import { UserRole } from '@prisma/client';
+
+// Mapa de tipos de item vindos de sistemas externos (ex: proposal_items.item_type
+// do kualiz-portal) para o nome exato do produto cadastrado no Comissiona.
+// Mantido por nome (não por id) para não depender de ids frágeis entre ambientes.
+export const EXTERNAL_PRODUCT_KEY_MAP: Record<string, string> = {
+  KUALIZ_BASE: 'Kualiz Omnichannel',
+  KUALIZ_LITE: 'Kualiz Omnichannel',
+  CRM: 'Kualiz CRM',
+  TELEPHONY: 'Kualiz PABX',
+  AI_ATTENDANCE: 'Kualiz IA de Atendimento',
+  API: 'Kualiz API',
+  API_INTEGRATION: 'Kualiz API',
+  AI_KLINGO: 'Kualiz IA Marcacao Cons/Ex Klingo',
+  KLINGO: 'Klingo',
+};
+
+export interface ExternalSaleItemDto {
+  productKey?: string; // uma das chaves de EXTERNAL_PRODUCT_KEY_MAP
+  productId?: string; // ou o id direto do produto (via GET /integrations/products)
+  type: 'IMPLANTATION' | 'MONTHLY' | 'ONE_TIME' | 'ANNUAL';
+  grossValue: number;
+  quantity?: number;
+  notes?: string;
+}
+
+export interface ExternalSaleDto {
+  source: string; // ex: 'kualiz-portal'
+  externalRef?: string; // ex: proposal_code, para rastreabilidade nas notas
+  client: {
+    legalName: string;
+    tradeName?: string;
+    document?: string;
+    email?: string;
+    phone?: string;
+    city?: string;
+    state?: string;
+  };
+  sellerEmail?: string;
+  sellerId?: string;
+  origin?: string;
+  taxRate: number; // percentual, ex: 10 = 10%
+  saleDate: string;
+  contractDate?: string;
+  notes?: string;
+  items: ExternalSaleItemDto[];
+}
+
+@Injectable()
+export class IntegrationsService {
+  constructor(
+    private prisma: PrismaService,
+    private salesService: SalesService,
+  ) {}
+
+  private async getTenantId(): Promise<string> {
+    const tenant = await this.prisma.tenant.findFirst();
+    if (!tenant) throw new NotFoundException('Nenhum tenant configurado no Comissiona.');
+    return tenant.id;
+  }
+
+  private async getSystemUserId(tenantId: string): Promise<string | undefined> {
+    const admin = await this.prisma.user.findFirst({ where: { tenantId, role: UserRole.ADMIN } });
+    return admin?.id;
+  }
+
+  async listSellers() {
+    const tenantId = await this.getTenantId();
+    return this.prisma.seller.findMany({
+      where: { tenantId, active: true },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async listProducts() {
+    const tenantId = await this.getTenantId();
+    return this.prisma.product.findMany({
+      where: { tenantId, active: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async convertExternalSale(dto: ExternalSaleDto) {
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('A venda precisa de pelo menos um item.');
+    }
+    if (dto.taxRate === undefined || dto.taxRate === null) {
+      throw new BadRequestException('Informe o percentual de imposto (taxRate) da venda.');
+    }
+
+    const tenantId = await this.getTenantId();
+
+    // Vendedor: por id direto (escolhido manualmente na tela de revisão) ou por e-mail
+    let sellerId = dto.sellerId;
+    if (!sellerId) {
+      if (!dto.sellerEmail) {
+        throw new BadRequestException('Informe sellerId ou sellerEmail.');
+      }
+      const seller = await this.prisma.seller.findFirst({
+        where: { tenantId, email: { equals: dto.sellerEmail, mode: 'insensitive' } },
+      });
+      if (!seller) {
+        throw new BadRequestException(
+          `Vendedor não encontrado no Comissiona para o e-mail "${dto.sellerEmail}". Use GET /integrations/sellers para escolher manualmente e envie sellerId.`,
+        );
+      }
+      sellerId = seller.id;
+    }
+
+    // Cliente: tenta achar por documento (CNPJ/CPF), depois por nome; senão cria novo
+    let customer = dto.client.document
+      ? await this.prisma.customer.findFirst({ where: { tenantId, document: dto.client.document } })
+      : null;
+
+    if (!customer && dto.client.legalName) {
+      customer = await this.prisma.customer.findFirst({
+        where: { tenantId, companyName: { equals: dto.client.legalName, mode: 'insensitive' } },
+      });
+    }
+
+    if (!customer) {
+      customer = await this.prisma.customer.create({
+        data: {
+          tenantId,
+          companyName: dto.client.legalName,
+          tradeName: dto.client.tradeName,
+          document: dto.client.document,
+          email: dto.client.email,
+          phone: dto.client.phone,
+          city: dto.client.city,
+          state: dto.client.state,
+          origin: dto.origin || 'Venda direta',
+          sellerId,
+        },
+      });
+    }
+
+    // Resolve productId de cada item (por id direto ou por chave mapeada)
+    const items: Array<{
+      productId: string;
+      type: 'IMPLANTATION' | 'MONTHLY' | 'ONE_TIME' | 'ANNUAL';
+      grossValue: number;
+      quantity: number;
+      notes?: string;
+    }> = [];
+
+    for (const item of dto.items) {
+      let productId = item.productId;
+      if (!productId) {
+        const key = item.productKey ? EXTERNAL_PRODUCT_KEY_MAP[item.productKey] : undefined;
+        if (!key) {
+          throw new BadRequestException(`Item sem productId/productKey válido: ${JSON.stringify(item)}`);
+        }
+        const product = await this.prisma.product.findFirst({ where: { tenantId, name: key } });
+        if (!product) {
+          throw new BadRequestException(`Produto "${key}" não encontrado no Comissiona.`);
+        }
+        productId = product.id;
+      }
+      items.push({
+        productId,
+        type: item.type,
+        grossValue: item.grossValue,
+        quantity: item.quantity || 1,
+        notes: item.notes,
+      });
+    }
+
+    const systemUserId = await this.getSystemUserId(tenantId);
+
+    const originNote =
+      dto.source && dto.externalRef ? `Origem: ${dto.source} — ${dto.externalRef}` : dto.source || undefined;
+    const notes = [dto.notes, originNote].filter(Boolean).join(' | ') || undefined;
+
+    const sale = await this.salesService.create(
+      tenantId,
+      {
+        customerId: customer.id,
+        sellerId,
+        origin: dto.origin || 'Venda direta',
+        taxRate: dto.taxRate,
+        saleDate: dto.saleDate,
+        contractDate: dto.contractDate,
+        notes,
+        items,
+      },
+      (systemUserId as string) || 'system',
+    );
+
+    return { saleId: sale.id, customerId: customer.id, sellerId };
+  }
+}
