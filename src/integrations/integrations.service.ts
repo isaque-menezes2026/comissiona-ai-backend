@@ -18,6 +18,16 @@ export const EXTERNAL_PRODUCT_KEY_MAP: Record<string, string> = {
   KLINGO: 'Klingo',
 };
 
+// Códigos de origem que o motor de comissão (commission_rules.saleOrigin) e a tela
+// de Vendas realmente reconhecem. Se o sistema externo mandar qualquer coisa fora
+// dessa lista (ex: um texto livre tipo "Indicação do Fulano - Clínica X"), a venda
+// era criada só com esse texto no origin e NENHUMA regra batia — nem a do vendedor,
+// que deveria sair sempre.
+const KNOWN_ORIGINS = [
+  'direct', 'partner', 'employee', 'upsell', 'crosssell',
+  'inbound', 'outbound', 'campaign', 'referral', 'event',
+];
+
 export interface ExternalSaleItemDto {
   productKey?: string; // uma das chaves de EXTERNAL_PRODUCT_KEY_MAP
   productId?: string; // ou o id direto do produto (via GET /integrations/products)
@@ -156,7 +166,7 @@ export class IntegrationsService {
           phone: dto.client.phone,
           city: dto.client.city,
           state: dto.client.state,
-          origin: dto.origin || 'Venda direta',
+          origin: KNOWN_ORIGINS.includes(dto.origin || '') ? dto.origin : 'direct',
           sellerId,
         },
       });
@@ -195,16 +205,29 @@ export class IntegrationsService {
 
     const systemUserId = await this.getSystemUserId(tenantId);
 
+    // Normaliza a origem: se o sistema externo mandou um texto livre (ex: descrevendo
+    // quem indicou a venda) em vez de um dos códigos que o motor de comissão reconhece,
+    // NÃO deixa esse texto virar o origin (senão nenhuma regra bate e a venda fica sem
+    // nenhuma comissão, nem a do vendedor). Trata como venda direta pra garantir que a
+    // comissão do vendedor seja calculada, e guarda o texto original nas notas pra quem
+    // for revisar avaliar se tem indicador (parceiro/colaborador) pra cadastrar depois.
+    let saleOrigin = dto.origin || 'direct';
+    let unrecognizedOriginNote: string | undefined;
+    if (!KNOWN_ORIGINS.includes(saleOrigin)) {
+      unrecognizedOriginNote = `⚠️ Origem enviada pelo ${dto.source || 'sistema externo'} não reconhecida: "${saleOrigin}" — tratada como venda direta pra não perder a comissão do vendedor. Revisar se há parceiro/colaborador indicador a cadastrar.`;
+      saleOrigin = 'direct';
+    }
+
     const originNote =
       dto.source && dto.externalRef ? `Origem: ${dto.source} — ${dto.externalRef}` : dto.source || undefined;
-    const notes = [dto.notes, originNote].filter(Boolean).join(' | ') || undefined;
+    const notes = [dto.notes, originNote, unrecognizedOriginNote].filter(Boolean).join(' | ') || undefined;
 
     const sale = await this.salesService.create(
       tenantId,
       {
         customerId: customer.id,
         sellerId,
-        origin: dto.origin || 'Venda direta',
+        origin: saleOrigin,
         taxRate: dto.taxRate,
         saleDate: dto.saleDate,
         contractDate: dto.contractDate,
@@ -246,7 +269,7 @@ export class IntegrationsService {
       phone: dto.phone,
       city: dto.city,
       state: dto.state,
-      origin: dto.origin || 'Venda direta',
+      origin: KNOWN_ORIGINS.includes(dto.origin || '') ? dto.origin : 'direct',
       notes: dto.notes,
     };
 
