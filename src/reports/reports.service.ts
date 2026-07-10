@@ -29,8 +29,11 @@ export class ReportsService {
   }
 
   async commissionsByProduct(tenantId: string, from: string, to: string) {
+    // Exclui canceladas: quando uma venda é editada, as comissões antigas são
+    // canceladas e perdem o vínculo com o item de venda (saleItemId fica null),
+    // o que fazia elas aparecerem aqui como um produto fantasma "N/A".
     const items = await this.prisma.commission.findMany({
-      where: { tenantId, createdAt: { gte: new Date(from), lte: new Date(to) } },
+      where: { tenantId, status: { not: 'CANCELLED' }, createdAt: { gte: new Date(from), lte: new Date(to) } },
       include: { saleItem: { include: { product: { select: { id: true, name: true } } } } },
     });
     const map: Record<string, { productName: string; total: number; count: number }> = {};
