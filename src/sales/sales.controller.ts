@@ -45,7 +45,7 @@ export class SalesController {
   // Anexo avulso de contrato assinado (vendas fechadas fora do portal Kualiz).
   @Post(':id/contract-file')
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } }))
-  uploadContractFile(@Request() req, @Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+  uploadContractFile(@Request() req, @Param('id') id: string, @UploadedFile() file: any) {
     return this.sales.uploadContractFile(req.user.tenantId, id, file, req.user.id);
   }
 

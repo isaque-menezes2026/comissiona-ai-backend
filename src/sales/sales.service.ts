@@ -388,7 +388,7 @@ export class SalesService {
   // fechadas fora do portal Kualiz (sem integração automática). Sobe pro Supabase
   // Storage do próprio Comissiona (bucket privado "sale-contracts") via service role,
   // e gera um link assinado de longa duração (10 anos) salvo em contractFileUrl.
-  async uploadContractFile(tenantId: string, saleId: string, file: Express.Multer.File, userId: string) {
+  async uploadContractFile(tenantId: string, saleId: string, file: any, userId: string) {
     if (!file) {
       throw new BadRequestException('Envie o arquivo no campo "file".');
     }
