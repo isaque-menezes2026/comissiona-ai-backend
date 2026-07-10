@@ -312,4 +312,21 @@ export class IntegrationsService {
 
     return { sellerId: seller.id, action: 'upserted' as const };
   }
+
+  // Atualiza o link do contrato assinado numa venda já existente. Cobre o caso em
+  // que o arquivo é anexado no sistema externo DEPOIS da venda já ter sido convertida
+  // (a chamada original de convertExternalSale só manda o link se ele já existir
+  // naquele momento). Usado por POST /integrations/external-sale/:saleId/contract-file.
+  async attachContractFile(saleId: string, contractUrl: string) {
+    if (!contractUrl) {
+      throw new BadRequestException('contractUrl é obrigatório.');
+    }
+    const tenantId = await this.getTenantId();
+    const sale = await this.prisma.sale.findFirst({ where: { id: saleId, tenantId } });
+    if (!sale) {
+      throw new NotFoundException(`Venda "${saleId}" não encontrada no Comissiona.`);
+    }
+    await this.prisma.sale.update({ where: { id: sale.id }, data: { contractFileUrl: contractUrl } });
+    return { saleId: sale.id, updated: true };
+  }
 }
