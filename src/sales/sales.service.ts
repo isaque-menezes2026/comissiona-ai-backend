@@ -383,4 +383,81 @@ export class SalesService {
 
     return { message: `Parcela ${dto.installmentNum} registrada. Motor de comissão notificado.` };
   }
+
+  // Anexa um PDF de contrato assinado direto numa venda do Comissiona — pra vendas
+  // fechadas fora do portal Kualiz (sem integração automática). Sobe pro Supabase
+  // Storage do próprio Comissiona (bucket privado "sale-contracts") via service role,
+  // e gera um link assinado de longa duração (10 anos) salvo em contractFileUrl.
+  async uploadContractFile(tenantId: string, saleId: string, file: Express.Multer.File, userId: string) {
+    if (!file) {
+      throw new BadRequestException('Envie o arquivo no campo "file".');
+    }
+    if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Apenas arquivos PDF são aceitos.');
+    }
+    const MAX_SIZE_BYTES = 15 * 1024 * 1024;
+    if (file.size > MAX_SIZE_BYTES) {
+      throw new BadRequestException('Arquivo maior que 15MB.');
+    }
+
+    const sale = await this.prisma.sale.findFirst({ where: { id: saleId, tenantId } });
+    if (!sale) throw new NotFoundException('Venda não encontrada.');
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey) {
+      throw new BadRequestException(
+        'Upload de contrato não configurado (faltam as variáveis SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY no backend).',
+      );
+    }
+
+    const bucket = 'sale-contracts';
+    const path = `${tenantId}/${saleId}-${Date.now()}.pdf`;
+
+    const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/${bucket}/${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+        'Content-Type': 'application/pdf',
+      },
+      body: file.buffer,
+    });
+    if (!uploadRes.ok) {
+      throw new BadRequestException(`Erro ao enviar arquivo: ${await uploadRes.text()}`);
+    }
+
+    // Bucket privado — service role ignora RLS, então não precisa de política pra
+    // assinar. Expira em 10 anos (equivalente a "não expira" na prática).
+    const signRes = await fetch(`${supabaseUrl}/storage/v1/object/sign/${bucket}/${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 365 * 10 }),
+    });
+    if (!signRes.ok) {
+      throw new BadRequestException(`Erro ao gerar link do arquivo: ${await signRes.text()}`);
+    }
+    const signData = (await signRes.json()) as { signedURL: string };
+    const contractFileUrl = `${supabaseUrl}/storage/v1${signData.signedURL}`;
+
+    const updated = await this.prisma.sale.update({
+      where: { id: saleId },
+      data: { contractFileUrl },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'CONTRACT_FILE_ATTACHED',
+      entity: 'sale',
+      entityId: saleId,
+      newData: { contractFileUrl },
+    });
+
+    return updated;
+  }
 }

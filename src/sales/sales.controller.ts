@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SalesService, CreateSaleDto, UpdateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
 
@@ -38,6 +40,13 @@ export class SalesController {
   @Delete(':id')
   remove(@Request() req, @Param('id') id: string) {
     return this.sales.remove(req.user.tenantId, id, req.user.id);
+  }
+
+  // Anexo avulso de contrato assinado (vendas fechadas fora do portal Kualiz).
+  @Post(':id/contract-file')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } }))
+  uploadContractFile(@Request() req, @Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+    return this.sales.uploadContractFile(req.user.tenantId, id, file, req.user.id);
   }
 
   @Post('invoices/payment')
