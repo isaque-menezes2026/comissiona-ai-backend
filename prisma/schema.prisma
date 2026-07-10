@@ -313,6 +313,7 @@ model Sale {
   saleDate         DateTime
   contractDate     DateTime?
   billingStartDate DateTime?
+  contractFileUrl  String?
   cancelledAt      DateTime?
   cancelReason     String?
   notes            String?

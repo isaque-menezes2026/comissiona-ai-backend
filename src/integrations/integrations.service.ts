@@ -77,6 +77,7 @@ export interface ExternalSaleDto {
   taxRate: number; // percentual, ex: 10 = 10%
   saleDate: string;
   contractDate?: string;
+  contractUrl?: string; // link do PDF do contrato gerado no sistema externo (ex: kualiz-portal)
   notes?: string;
   items: ExternalSaleItemDto[];
 }
@@ -231,6 +232,7 @@ export class IntegrationsService {
         taxRate: dto.taxRate,
         saleDate: dto.saleDate,
         contractDate: dto.contractDate,
+        contractFileUrl: dto.contractUrl,
         notes,
         items,
       },

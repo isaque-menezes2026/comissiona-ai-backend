@@ -15,6 +15,7 @@ export interface CreateSaleDto {
   saleDate: string;
   contractDate?: string;
   billingStartDate?: string;
+  contractFileUrl?: string;
   notes?: string;
   items: Array<{
     productId: string;
@@ -35,6 +36,7 @@ export interface UpdateSaleDto {
   saleDate?: string;
   contractDate?: string;
   billingStartDate?: string;
+  contractFileUrl?: string;
   notes?: string;
   status?: SaleStatus;
   items?: Array<{
@@ -81,6 +83,7 @@ export class SalesService {
         saleDate: new Date(dto.saleDate),
         contractDate: dto.contractDate ? new Date(dto.contractDate) : null,
         billingStartDate: dto.billingStartDate ? new Date(dto.billingStartDate) : null,
+        contractFileUrl: dto.contractFileUrl || null,
         notes: dto.notes,
         items: {
           create: dto.items.map((item) => ({
@@ -140,6 +143,7 @@ export class SalesService {
     if (dto.saleDate !== undefined) updateData.saleDate = new Date(dto.saleDate);
     if (dto.contractDate !== undefined) updateData.contractDate = dto.contractDate ? new Date(dto.contractDate) : null;
     if (dto.billingStartDate !== undefined) updateData.billingStartDate = dto.billingStartDate ? new Date(dto.billingStartDate) : null;
+    if (dto.contractFileUrl !== undefined) updateData.contractFileUrl = dto.contractFileUrl || null;
     if (dto.notes !== undefined) updateData.notes = dto.notes;
     if (dto.status !== undefined) {
       updateData.status = dto.status;
