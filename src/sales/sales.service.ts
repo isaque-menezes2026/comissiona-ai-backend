@@ -7,7 +7,7 @@ import { SaleStatus } from '@prisma/client';
 
 export interface CreateSaleDto {
   customerId: string;
-  sellerId: string;
+  sellerId?: string;
   partnerId?: string;
   employeeId?: string;
   origin: string;
@@ -68,13 +68,20 @@ export class SalesService {
       throw new BadRequestException('A venda deve ter pelo menos um item (produto).');
     }
 
+    // Venda precisa ter um responsável: vendedor interno OU parceiro (venda fechada
+    // diretamente pelo parceiro, sem participação de vendedor nosso). Sem isso não
+    // dava pra registrar uma venda "só do parceiro" sem usar um vendedor fictício.
+    if (!dto.sellerId && !dto.partnerId) {
+      throw new BadRequestException('Informe o vendedor responsável ou o parceiro indicador da venda.');
+    }
+
     const taxRateDecimal = dto.taxRate / 100;
 
     const sale = await this.prisma.sale.create({
       data: {
         tenantId,
         customerId: dto.customerId,
-        sellerId: dto.sellerId,
+        sellerId: dto.sellerId || null,
         partnerId: dto.partnerId || null,
         employeeId: dto.employeeId || null,
         origin: dto.origin,
@@ -133,9 +140,16 @@ export class SalesService {
     const taxRateDecimal =
       dto.taxRate !== undefined ? dto.taxRate / 100 : Number(sale.taxRate);
 
+    // Depois de editar, a venda ainda precisa ter vendedor OU parceiro como responsável.
+    const nextSellerId = dto.sellerId !== undefined ? (dto.sellerId || null) : sale.sellerId;
+    const nextPartnerId = dto.partnerId !== undefined ? (dto.partnerId || null) : sale.partnerId;
+    if (!nextSellerId && !nextPartnerId) {
+      throw new BadRequestException('Informe o vendedor responsável ou o parceiro indicador da venda.');
+    }
+
     const updateData: any = {};
     if (dto.customerId !== undefined) updateData.customerId = dto.customerId;
-    if (dto.sellerId !== undefined) updateData.sellerId = dto.sellerId;
+    if (dto.sellerId !== undefined) updateData.sellerId = dto.sellerId || null;
     if (dto.partnerId !== undefined) updateData.partnerId = dto.partnerId || null;
     if (dto.employeeId !== undefined) updateData.employeeId = dto.employeeId || null;
     if (dto.origin !== undefined) updateData.origin = dto.origin;

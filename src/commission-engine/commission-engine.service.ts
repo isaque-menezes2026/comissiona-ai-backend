@@ -121,6 +121,10 @@ export class CommissionEngineService {
       // Valida beneficiário
       if (rule.beneficiaryType === BeneficiaryType.PARTNER && !sale.partnerId) return false;
       if (rule.beneficiaryType === BeneficiaryType.EMPLOYEE && !sale.employeeId) return false;
+      // Venda sem vendedor interno (ex: parceiro indicou e fechou sozinho) não gera
+      // nenhuma comissão de vendedor — nem a recorrente, nem o fixo de "conversão"
+      // (ex: R$50/R$80 por venda de parceiro convertida). Só o parceiro recebe.
+      if (rule.beneficiaryType === BeneficiaryType.SELLER && !sale.sellerId) return false;
 
       // Valida vigência
       const now = new Date();
