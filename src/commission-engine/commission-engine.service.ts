@@ -13,7 +13,7 @@ import * as dayjs from 'dayjs';
 interface CalculationContext {
   tenantId: string;
   saleId: string;
-  triggeredBy?: string; // userId que disparou
+  triggeredBy?: string;
 }
 
 @Injectable()
@@ -24,11 +24,6 @@ export class CommissionEngineService {
     private prisma: PrismaService,
     private audit: AuditService,
   ) {}
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // PONTO DE ENTRADA PRINCIPAL
-  // Chamado após criação/atualização de venda
-  // ──────────────────────────────────────────────────────────────────────────
 
   async processSale(ctx: CalculationContext): Promise<void> {
     const { tenantId, saleId } = ctx;
@@ -50,7 +45,6 @@ export class CommissionEngineService {
       return;
     }
 
-    // Para cada item da venda, busca e aplica regras
     for (const item of sale.items) {
       await this.processItem(sale, item, ctx);
     }
@@ -65,16 +59,10 @@ export class CommissionEngineService {
     });
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // PROCESSAMENTO POR ITEM
-  // ──────────────────────────────────────────────────────────────────────────
-
   private async processItem(sale: any, item: any, ctx: CalculationContext) {
-    // Busca regras aplicáveis a este item
     const rules = await this.findApplicableRules(sale, item);
 
     for (const rule of rules) {
-      // Evita duplicatas: verifica se comissão já existe para esta venda+item+regra
       const exists = await this.prisma.commission.findFirst({
         where: {
           tenantId: ctx.tenantId,
@@ -92,10 +80,6 @@ export class CommissionEngineService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // BUSCA DE REGRAS APLICÁVEIS
-  // ──────────────────────────────────────────────────────────────────────────
-
   private async findApplicableRules(sale: any, item: any) {
     const rules = await this.prisma.commissionRule.findMany({
       where: {
@@ -103,7 +87,7 @@ export class CommissionEngineService {
         active: true,
         OR: [
           { productId: item.productId },
-          { productId: null }, // regras globais
+          { productId: null },
         ],
         AND: [
           {
@@ -118,7 +102,6 @@ export class CommissionEngineService {
     });
 
     return rules.filter((rule) => {
-      // Valida beneficiário
       if (rule.beneficiaryType === BeneficiaryType.PARTNER && !sale.partnerId) return false;
       if (rule.beneficiaryType === BeneficiaryType.EMPLOYEE && !sale.employeeId) return false;
       // Venda sem vendedor interno (ex: parceiro indicou e fechou sozinho) não gera
@@ -126,7 +109,6 @@ export class CommissionEngineService {
       // (ex: R$50/R$80 por venda de parceiro convertida). Só o parceiro recebe.
       if (rule.beneficiaryType === BeneficiaryType.SELLER && !sale.sellerId) return false;
 
-      // Valida vigência
       const now = new Date();
       if (rule.startDate && rule.startDate > now) return false;
       if (rule.endDate && rule.endDate < now) return false;
@@ -135,27 +117,16 @@ export class CommissionEngineService {
     });
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // CÁLCULO DO VALOR DA COMISSÃO
-  // SEMPRE sobre valor LÍQUIDO (net) — conforme ADENDO obrigatório
-  // ──────────────────────────────────────────────────────────────────────────
-
   private calculateCommission(
     sale: any,
     item: any,
     rule: any,
   ): { amount: number; baseValue: number | null; isFixed: boolean } | null {
-    const netValue = Number(item.netValue); // BASE: sempre líquido
+    const netValue = Number(item.netValue);
 
     switch (rule.commissionType as CommissionType) {
       case CommissionType.FIXED_AMOUNT: {
         const grossFixed = Number(rule.fixedAmount);
-
-        // REGRA GERAL (ADENDO): valor fixo NÃO desconta impostos.
-        // EXCEÇÃO: comissão fixa de PARCEIRO (ex: Kualiz - Parceiro Externo R$1.000)
-        // pode ser configurada para descontar impostos via "appliesOnNetAmount".
-        // Isso não afeta comissões fixas de vendedor/colaborador (indicação, conversão),
-        // que continuam sempre no valor cheio, independente dessa flag.
         const descontaImposto = rule.beneficiaryType === BeneficiaryType.PARTNER && rule.appliesOnNetAmount;
         const taxRate = Number(item.taxRate ?? sale.taxRate ?? 0);
         const amount = descontaImposto
@@ -187,7 +158,6 @@ export class CommissionEngineService {
 
       case CommissionType.FIRST_MONTHLY_PAYMENT:
         if (item.type !== 'MONTHLY') return null;
-        // 100% da 1ª mensalidade líquida
         return {
           amount: (netValue * Number(rule.percentage ?? 100)) / 100,
           baseValue: netValue,
@@ -196,7 +166,6 @@ export class CommissionEngineService {
 
       case CommissionType.THIRD_MONTHLY_PAYMENT:
         if (item.type !== 'MONTHLY') return null;
-        // 100% da 3ª mensalidade líquida
         return {
           amount: (netValue * Number(rule.percentage ?? 100)) / 100,
           baseValue: netValue,
@@ -216,10 +185,6 @@ export class CommissionEngineService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // CRIAÇÃO DO REGISTRO DE COMISSÃO + PREVISÃO DE RECEBIMENTO
-  // ──────────────────────────────────────────────────────────────────────────
-
   private async createCommission(
     tenantId: string,
     sale: any,
@@ -228,14 +193,10 @@ export class CommissionEngineService {
     calc: { amount: number; baseValue: number | null; isFixed: boolean },
     userId?: string,
   ) {
-    // Determina beneficiário
     const { beneficiaryId, sellerId, partnerId, employeeId } =
       this.resolveBeneficiary(sale, rule.beneficiaryType);
 
-    // Calcula previsão de recebimento (ADENDO obrigatório)
     const forecast = this.calculateForecast(sale, rule);
-
-    // Status inicial baseado no gatilho
     const initialStatus = this.resolveInitialStatus(rule, sale);
 
     await this.prisma.commission.create({
@@ -256,8 +217,6 @@ export class CommissionEngineService {
         amount: calc.amount,
         isFixed: calc.isFixed,
         forecastReason: forecast.reason,
-
-        // ADENDO: campos obrigatórios de previsão
         dateSaleBase: sale.billingStartDate || sale.contractDate || sale.saleDate,
         dateExpectedBilling: forecast.expectedBilling,
         dateExpectedCustomerPayment: forecast.expectedCustomerPayment,
@@ -272,10 +231,6 @@ export class CommissionEngineService {
       `[ENGINE] Comissão criada: ${calc.amount} para ${beneficiaryId} | ${rule.commissionType} | ${initialStatus}`,
     );
   }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // RESOLUÇÃO DE BENEFICIÁRIO
-  // ──────────────────────────────────────────────────────────────────────────
 
   private resolveBeneficiary(sale: any, beneficiaryType: BeneficiaryType) {
     switch (beneficiaryType) {
@@ -303,11 +258,6 @@ export class CommissionEngineService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // PREVISÃO DE RECEBIMENTO (ADENDO OBRIGATÓRIO)
-  // O sistema DEVE informar: quanto, por qual venda, qual regra, quando, qual condição falta
-  // ──────────────────────────────────────────────────────────────────────────
-
   private calculateForecast(sale: any, rule: any) {
     const base = dayjs(sale.billingStartDate || sale.contractDate || sale.saleDate);
     let avgDays = rule.appliesAfterDays || 30;
@@ -316,7 +266,7 @@ export class CommissionEngineService {
 
     switch (rule.commissionType as CommissionType) {
       case CommissionType.THIRD_MONTHLY_PAYMENT:
-        avgDays = rule.appliesAfterDays || 90; // padrão 90 dias para 3ª mensalidade
+        avgDays = rule.appliesAfterDays || 90;
         reason = '3ª mensalidade paga';
         forecastStatus = 'awaiting_third_payment';
         break;
@@ -332,9 +282,6 @@ export class CommissionEngineService {
         break;
       case CommissionType.FIXED_AMOUNT:
         avgDays = rule.appliesAfterDays || 15;
-        // O texto refletia sempre "conversão do contrato", mesmo quando o gatilho
-        // real da regra era outro (ex: 1ª fatura paga). Ajustado para refletir o
-        // triggerEvent de fato configurado na regra.
         switch (rule.triggerEvent as TriggerEvent) {
           case TriggerEvent.FIRST_INVOICE_PAID:
             reason = 'Aguardando 1ª fatura ser paga';
@@ -367,7 +314,7 @@ export class CommissionEngineService {
 
     const expectedBilling = base.add(7, 'day').toDate();
     const expectedCustomerPayment = base.add(avgDays, 'day').toDate();
-    const expectedRelease = base.add(avgDays + 5, 'day').toDate(); // +5 dias para processamento
+    const expectedRelease = base.add(avgDays + 5, 'day').toDate();
     const competence = dayjs(expectedRelease).format('YYYY-MM');
 
     return {
@@ -381,15 +328,9 @@ export class CommissionEngineService {
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // STATUS INICIAL DA COMISSÃO
-  // ──────────────────────────────────────────────────────────────────────────
-
   private resolveInitialStatus(rule: any, sale: any): CommissionStatus {
-    // Se requer aprovação manual, bloqueia
     if (rule.requiresManagerApproval) return CommissionStatus.BLOCKED;
 
-    // Comissões de mensalidade ficam previstas até evento ocorrer
     if (
       rule.commissionType === CommissionType.THIRD_MONTHLY_PAYMENT ||
       rule.commissionType === CommissionType.FIRST_MONTHLY_PAYMENT
@@ -397,7 +338,6 @@ export class CommissionEngineService {
       return CommissionStatus.PREDICTED;
     }
 
-    // Contrato assinado como gatilho e contrato já assinado
     if (
       rule.triggerEvent === TriggerEvent.CONTRACT_SIGNED &&
       sale.contractDate
@@ -408,14 +348,9 @@ export class CommissionEngineService {
     return CommissionStatus.PREDICTED;
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // LIBERAÇÃO POR EVENTO (invoice pago, 3ª mensalidade paga etc.)
-  // ──────────────────────────────────────────────────────────────────────────
-
   async processInvoicePaid(tenantId: string, saleId: string, installmentNum: number, userId?: string) {
     this.logger.log(`[ENGINE] Fatura ${installmentNum} paga para venda ${saleId}`);
 
-    // Busca comissões previstas desta venda
     const commissions = await this.prisma.commission.findMany({
       where: { tenantId, saleId, status: { in: [CommissionStatus.PREDICTED, CommissionStatus.BLOCKED] } },
       include: { rule: true },
@@ -461,10 +396,6 @@ export class CommissionEngineService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // CANCELAMENTO (cliente cancelou, inadimplência etc.)
-  // ──────────────────────────────────────────────────────────────────────────
-
   async cancelSaleCommissions(tenantId: string, saleId: string, reason: string, userId?: string) {
     const result = await this.prisma.commission.updateMany({
       where: {
@@ -492,18 +423,6 @@ export class CommissionEngineService {
     return result;
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // CORREÇÃO: regras padrão de comissão recorrente/percentual do vendedor
-  // (ex: "Kualiz Base - 3a Mensalidade (100%)") foram cadastradas sem
-  // restrição de origem (saleOrigin null), então valiam pra QUALQUER venda —
-  // inclusive vendas vindas de indicação de parceiro/colaborador, que já têm
-  // suas próprias regras fixas dedicadas (ex: parceiro recebe R$1.000/1a
-  // mensalidade, vendedor recebe R$50/R$80 fixo pela conversão).
-  // Resultado: o vendedor era pago DUAS vezes pela mesma venda de parceiro —
-  // o fixo de conversão E a comissão recorrente completa que era só pra
-  // venda direta. Esta correção restringe essas regras a saleOrigin='direct'.
-  // ──────────────────────────────────────────────────────────────────────────
-
   async restrictRecurringRulesToDirectOrigin(tenantId: string) {
     const result = await this.prisma.commissionRule.updateMany({
       where: {
@@ -523,14 +442,6 @@ export class CommissionEngineService {
     });
     return result.count;
   }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // RECONCILIAÇÃO: depois de corrigir o escopo das regras acima, comissões já
-  // criadas (ainda PREDICTED/BLOCKED) que não se encaixam mais na regra
-  // (origem diferente, beneficiário sem parceiro/colaborador vinculado, ou
-  // regra desativada) são canceladas. Não mexe em comissões já RELEASED,
-  // PAID ou CANCELLED — só limpa o que ainda está pendente e ficou indevido.
-  // ──────────────────────────────────────────────────────────────────────────
 
   async reconcilePendingCommissions(tenantId: string) {
     const commissions = await this.prisma.commission.findMany({
@@ -571,12 +482,6 @@ export class CommissionEngineService {
     return cancelled;
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // MANUTENÇÃO: atualiza apenas o texto/status de previsão de comissões já
-  // existentes (PREDICTED/BLOCKED), sem alterar valor, status real ou datas.
-  // Usado após correções no texto do forecastReason (ex: gatilho real da regra).
-  // ──────────────────────────────────────────────────────────────────────────
-
   async refreshForecastText(tenantId: string) {
     const commissions = await this.prisma.commission.findMany({
       where: { tenantId, status: { in: [CommissionStatus.PREDICTED, CommissionStatus.BLOCKED] } },
@@ -596,17 +501,11 @@ export class CommissionEngineService {
     return { message: `${updated} comissão(ões) com texto de previsão atualizado.`, count: updated };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // RECÁLCULO AUTORIZADO (quando valor da venda é alterado)
-  // ──────────────────────────────────────────────────────────────────────────
-
   async recalculate(ctx: CalculationContext & { authorizedById: string }) {
     this.logger.log(`[ENGINE] Recalculando comissões da venda ${ctx.saleId} autorizado por ${ctx.authorizedById}`);
 
-    // Cancela comissões previstas anteriores
     await this.cancelSaleCommissions(ctx.tenantId, ctx.saleId, 'Recalculado por alteração de venda', ctx.authorizedById);
 
-    // Reprocessa
     await this.processSale(ctx);
 
     await this.audit.log({
