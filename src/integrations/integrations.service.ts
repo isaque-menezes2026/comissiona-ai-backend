@@ -16,6 +16,14 @@ export const EXTERNAL_PRODUCT_KEY_MAP: Record<string, string> = {
   API_INTEGRATION: 'Kualiz API',
   AI_KLINGO: 'Kualiz IA Marcacao Cons/Ex Klingo',
   KLINGO: 'Klingo',
+  // Adicionados em 2026-07-23. Chutes de código com base no nome do produto —
+  // se o portal Kualiz mandar um item_type diferente desses, o fallback por
+  // nome logo abaixo (resolveProductId) cobre o caso mesmo assim.
+  COST_INTELLIGENCE: 'Kualiz Cost Intelligence',
+  KUALIZ_COST_INTELLIGENCE: 'Kualiz Cost Intelligence',
+  API_OFICIAL: 'Kualiz API Oficial (Meta)',
+  WHATSAPP_API_OFICIAL: 'Kualiz API Oficial (Meta)',
+  LAB_APOIO: 'Lab de Apoio',
 };
 
 // Códigos de origem que o motor de comissão (commission_rules.saleOrigin) e a tela
@@ -118,6 +126,42 @@ export class IntegrationsService {
     });
   }
 
+  // Resolve o productId de um item vindo de sistema externo. Ordem de tentativa:
+  // 1) productId direto (já resolvido manualmente na tela de revisão do portal)
+  // 2) productKey mapeado em EXTERNAL_PRODUCT_KEY_MAP (código combinado previamente)
+  // 3) fallback por NOME: casa item.itemName / item.productKey (texto livre) contra o
+  //    nome do produto cadastrado no Comissiona, ignorando maiúsculas/acentos/espaços.
+  // Isso evita que um produto novo criado no portal (ex: "Kualiz Cost Intelligence")
+  // quebre a conversão só porque ainda não foi adicionado ao mapa de códigos aqui.
+  // Adicionado em 2026-07-23 depois de repetidos erros de "Produto não encontrado"
+  // na conversão de propostas com produtos recém-criados no portal.
+  private async resolveProductId(tenantId: string, item: ExternalSaleItemDto): Promise<string> {
+    if (item.productId) return item.productId;
+
+    const mappedName = item.productKey ? EXTERNAL_PRODUCT_KEY_MAP[item.productKey] : undefined;
+    if (mappedName) {
+      const product = await this.prisma.product.findFirst({ where: { tenantId, name: mappedName, active: true } });
+      if (product) return product.id;
+      // Código mapeado mas produto não existe (ex: renomeado/desativado) — cai pro fallback abaixo.
+    }
+
+    const candidateText = mappedName || item.productKey || (item as any).itemName || (item as any).productName;
+    if (candidateText) {
+      const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const target = normalize(candidateText);
+      const allProducts = await this.prisma.product.findMany({ where: { tenantId, active: true }, select: { id: true, name: true } });
+      const match = allProducts.find((p) => normalize(p.name) === target)
+        || allProducts.find((p) => normalize(p.name).includes(target) || target.includes(normalize(p.name)));
+      if (match) return match.id;
+    }
+
+    throw new BadRequestException(
+      `Não consegui identificar o produto do item ${JSON.stringify(item)}. ` +
+      `Cadastre o produto no Comissiona com um nome reconhecível ou mande productId diretamente ` +
+      `(use GET /integrations/products para ver os produtos e ids existentes).`,
+    );
+  }
+
   async convertExternalSale(dto: ExternalSaleDto) {
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('A venda precisa de pelo menos um item.');
@@ -183,18 +227,7 @@ export class IntegrationsService {
     }> = [];
 
     for (const item of dto.items) {
-      let productId = item.productId;
-      if (!productId) {
-        const key = item.productKey ? EXTERNAL_PRODUCT_KEY_MAP[item.productKey] : undefined;
-        if (!key) {
-          throw new BadRequestException(`Item sem productId/productKey válido: ${JSON.stringify(item)}`);
-        }
-        const product = await this.prisma.product.findFirst({ where: { tenantId, name: key } });
-        if (!product) {
-          throw new BadRequestException(`Produto "${key}" não encontrado no Comissiona.`);
-        }
-        productId = product.id;
-      }
+      const productId = await this.resolveProductId(tenantId, item);
       items.push({
         productId,
         type: item.type,
