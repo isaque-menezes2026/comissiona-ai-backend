@@ -68,9 +68,6 @@ export class SalesService {
       throw new BadRequestException('A venda deve ter pelo menos um item (produto).');
     }
 
-    // Venda precisa ter um responsável: vendedor interno OU parceiro (venda fechada
-    // diretamente pelo parceiro, sem participação de vendedor nosso). Sem isso não
-    // dava pra registrar uma venda "só do parceiro" sem usar um vendedor fictício.
     if (!dto.sellerId && !dto.partnerId) {
       throw new BadRequestException('Informe o vendedor responsável ou o parceiro indicador da venda.');
     }
@@ -132,7 +129,6 @@ export class SalesService {
     const sale = await this.prisma.sale.findFirst({ where: { id, tenantId } });
     if (!sale) throw new NotFoundException('Venda não encontrada.');
 
-    // Não permite editar venda cancelada
     if (sale.status === SaleStatus.CANCELLED) {
       throw new BadRequestException('Não é possível editar uma venda cancelada.');
     }
@@ -140,7 +136,6 @@ export class SalesService {
     const taxRateDecimal =
       dto.taxRate !== undefined ? dto.taxRate / 100 : Number(sale.taxRate);
 
-    // Depois de editar, a venda ainda precisa ter vendedor OU parceiro como responsável.
     const nextSellerId = dto.sellerId !== undefined ? (dto.sellerId || null) : sale.sellerId;
     const nextPartnerId = dto.partnerId !== undefined ? (dto.partnerId || null) : sale.partnerId;
     if (!nextSellerId && !nextPartnerId) {
@@ -164,20 +159,17 @@ export class SalesService {
       if (dto.status === SaleStatus.CANCELLED) updateData.cancelledAt = new Date();
     }
 
-    // Se há novos itens, cancela comissões previstas e recria os itens
     if (dto.items !== undefined) {
       if (dto.items.length === 0) {
         throw new BadRequestException('A venda deve ter pelo menos um item (produto).');
       }
 
-      // Cancela comissões PREDICTED para recalcular
       await this.engine.cancelSaleCommissions(
         tenantId, id,
         'Venda editada — itens atualizados, recalculando comissões',
         userId,
       );
 
-      // Deleta itens existentes e cria os novos
       await this.prisma.saleItem.deleteMany({ where: { saleId: id } });
 
       updateData.items = {
@@ -214,14 +206,12 @@ export class SalesService {
       newData: dto,
     });
 
-    // Se itens foram atualizados, roda o motor de comissão novamente
     if (dto.items !== undefined) {
       setImmediate(() => {
         this.engine.processSale({ tenantId, saleId: id, triggeredBy: userId });
       });
     }
 
-    // Se cancelada via edição, cancela comissões
     if (dto.status === SaleStatus.CANCELLED || dto.status === SaleStatus.DEFAULTING) {
       await this.engine.cancelSaleCommissions(
         tenantId, id,
@@ -328,8 +318,6 @@ export class SalesService {
     return updated;
   }
 
-  // Exclusão só é permitida se a venda não tiver nenhuma comissão já paga.
-  // Caso contrário, orienta a cancelar a venda em vez de excluir (preserva histórico financeiro).
   async remove(tenantId: string, id: string, userId: string) {
     const sale = await this.prisma.sale.findFirst({ where: { id, tenantId } });
     if (!sale) throw new NotFoundException('Venda não encontrada.');
@@ -398,10 +386,6 @@ export class SalesService {
     return { message: `Parcela ${dto.installmentNum} registrada. Motor de comissão notificado.` };
   }
 
-  // Anexa um PDF de contrato assinado direto numa venda do Comissiona — pra vendas
-  // fechadas fora do portal Kualiz (sem integração automática). Sobe pro Supabase
-  // Storage do próprio Comissiona (bucket privado "sale-contracts") via service role,
-  // e gera um link assinado de longa duração (10 anos) salvo em contractFileUrl.
   async uploadContractFile(tenantId: string, saleId: string, file: any, userId: string) {
     if (!file) {
       throw new BadRequestException('Envie o arquivo no campo "file".');
@@ -441,8 +425,6 @@ export class SalesService {
       throw new BadRequestException(`Erro ao enviar arquivo: ${await uploadRes.text()}`);
     }
 
-    // Bucket privado — service role ignora RLS, então não precisa de política pra
-    // assinar. Expira em 10 anos (equivalente a "não expira" na prática).
     const signRes = await fetch(`${supabaseUrl}/storage/v1/object/sign/${bucket}/${path}`, {
       method: 'POST',
       headers: {
