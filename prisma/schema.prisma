@@ -569,14 +569,8 @@ model Goal {
   achievedValue   Decimal   @db.Decimal(12, 2) @default(0)
   bonusAmount     Decimal?  @db.Decimal(12, 2)
   bonusPercentage Decimal?  @db.Decimal(8, 4)
-  // Validade: opcional. Se preenchida, a meta só conta como vigente dentro
-  // dessa janela de datas. Usado junto com "active" para permitir manter
-  // metas antigas no histórico sem elas contarem no acompanhamento atual.
   startDate       DateTime?
   endDate         DateTime?
-  // Quando uma nova meta é criada para o mesmo produto/vendedor/período,
-  // a(s) meta(s) anterior(es) equivalentes são marcadas active=false
-  // automaticamente, em vez de ficarem duplicadas.
   active          Boolean   @default(true)
   notes           String?
   createdAt       DateTime  @default(now())
