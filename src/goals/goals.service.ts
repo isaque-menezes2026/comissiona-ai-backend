@@ -235,7 +235,17 @@ export class GoalsService {
     if (g.type === 'quantity') {
       return this.prisma.saleItem.count({ where: saleItemWhere });
     }
-    const agg = await this.prisma.saleItem.aggregate({ where: saleItemWhere, _sum: { grossValue: true } });
+
+    // Meta de receita mede o valor RECORRENTE MENSAL (mensalidade) gerado no
+    // período — não a receita total da venda. Sem esse filtro, um item de
+    // implantação/setup (cobrança única, geralmente bem maior que a
+    // mensalidade) contava inteiro como se fosse recorrência mensal e
+    // inflava o percentual da meta muito acima de 100% (ex: Klingo em
+    // 289% por causa de uma implantação de R$40mil+ numa meta de R$15mil/mês).
+    const agg = await this.prisma.saleItem.aggregate({
+      where: { ...saleItemWhere, type: 'MONTHLY' },
+      _sum: { grossValue: true },
+    });
     return Number(agg._sum?.grossValue || 0);
   }
 
@@ -347,7 +357,12 @@ export class GoalsService {
       if (goal.type === 'quantity') {
         achieved = await this.prisma.saleItem.count({ where: saleItemWhere });
       } else {
-        const agg = await this.prisma.saleItem.aggregate({ where: saleItemWhere, _sum: { grossValue: true } });
+        // Mesma correção do computeAchieved: receita de meta = só mensalidade
+        // recorrente (MONTHLY), não a venda inteira (implantação inclusa).
+        const agg = await this.prisma.saleItem.aggregate({
+          where: { ...saleItemWhere, type: 'MONTHLY' },
+          _sum: { grossValue: true },
+        });
         achieved = Number(agg._sum?.grossValue || 0);
       }
 
