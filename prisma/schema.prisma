@@ -320,8 +320,8 @@ model Sale {
   tenant           Tenant     @relation(fields: [tenantId], references: [id])
   customerId       String
   customer         Customer   @relation(fields: [customerId], references: [id])
-  sellerId         String
-  seller           Seller     @relation(fields: [sellerId], references: [id])
+  sellerId         String?
+  seller           Seller?    @relation(fields: [sellerId], references: [id])
   partnerId        String?
   partner          Partner?   @relation(fields: [partnerId], references: [id])
   employeeId       String?
@@ -332,6 +332,7 @@ model Sale {
   saleDate         DateTime
   contractDate     DateTime?
   billingStartDate DateTime?
+  contractFileUrl  String?
   cancelledAt      DateTime?
   cancelReason     String?
   notes            String?
