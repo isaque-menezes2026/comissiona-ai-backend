@@ -26,4 +26,15 @@ export class AuthController {
   changePassword(@Request() req, @Body() body: { oldPassword: string; newPassword: string }) {
     return this.auth.changePassword(req.user.id, body.oldPassword, body.newPassword);
   }
+
+  // Endpoints públicos (sem guard) do fluxo de "esqueci minha senha".
+  @Post('forgot-password')
+  forgotPassword(@Body() body: { email: string }) {
+    return this.auth.forgotPassword(body.email);
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() body: { token: string; newPassword: string }) {
+    return this.auth.resetPassword(body.token, body.newPassword);
+  }
 }
