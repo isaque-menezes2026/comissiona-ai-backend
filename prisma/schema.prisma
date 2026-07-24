@@ -62,6 +62,7 @@ model User {
   employee     Employee? @relation(fields: [employeeId], references: [id])
   auditLogs    AuditLog[]
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -87,6 +88,24 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// Token de uso único pro fluxo de "esqueci minha senha". Guardamos o hash
+// (sha256) do token, nunca o valor bruto — igual a uma senha, só que de vida
+// curta. O e-mail com o link de redefinição é enviado via Resend
+// (RESEND_API_KEY). Sem essa env var configurada, o backend loga o link no
+// console em vez de falhar — permite testar o fluxo sem provedor de e-mail.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Product {
@@ -301,8 +320,8 @@ model Sale {
   tenant           Tenant     @relation(fields: [tenantId], references: [id])
   customerId       String
   customer         Customer   @relation(fields: [customerId], references: [id])
-  sellerId         String?
-  seller           Seller?    @relation(fields: [sellerId], references: [id])
+  sellerId         String
+  seller           Seller     @relation(fields: [sellerId], references: [id])
   partnerId        String?
   partner          Partner?   @relation(fields: [partnerId], references: [id])
   employeeId       String?
@@ -313,7 +332,6 @@ model Sale {
   saleDate         DateTime
   contractDate     DateTime?
   billingStartDate DateTime?
-  contractFileUrl  String?
   cancelledAt      DateTime?
   cancelReason     String?
   notes            String?
@@ -553,32 +571,28 @@ model AuditLog {
   @@map("audit_logs")
 }
 model Goal {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   tenantId        String
-  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
   productId       String?
-  product         Product?  @relation(fields: [productId], references: [id])
+  product         Product? @relation(fields: [productId], references: [id])
   sellerId        String?
-  seller          Seller?   @relation(fields: [sellerId], references: [id])
+  seller          Seller?  @relation(fields: [sellerId], references: [id])
   teamName        String?
-  periodType      String    @default("monthly")
-  periodKey       String    @default("")
+  periodType      String   @default("monthly")
+  periodKey       String   @default("")
   month           String?
-  type            String    @default("revenue")
-  targetValue     Decimal   @db.Decimal(12, 2)
-  achievedValue   Decimal   @db.Decimal(12, 2) @default(0)
-  bonusAmount     Decimal?  @db.Decimal(12, 2)
-  bonusPercentage Decimal?  @db.Decimal(8, 4)
-  startDate       DateTime?
-  endDate         DateTime?
-  active          Boolean   @default(true)
+  type            String   @default("revenue")
+  targetValue     Decimal  @db.Decimal(12, 2)
+  achievedValue   Decimal  @db.Decimal(12, 2) @default(0)
+  bonusAmount     Decimal? @db.Decimal(12, 2)
+  bonusPercentage Decimal? @db.Decimal(8, 4)
   notes           String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([tenantId])
   @@index([tenantId, sellerId, month])
   @@index([tenantId, productId, periodKey])
-  @@index([tenantId, active])
   @@map("goals")
 }
