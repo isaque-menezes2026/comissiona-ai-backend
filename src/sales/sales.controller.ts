@@ -1,7 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SalesService, CreateSaleDto, UpdateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
 
@@ -19,34 +17,22 @@ export class SalesController {
 
   @Get()
   findAll(@Request() req, @Query() filters: any) {
-    return this.sales.findAll(req.user.tenantId, filters);
+    return this.sales.findAll(req.user.tenantId, filters, req.user);
   }
 
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
-    return this.sales.findOne(req.user.tenantId, id);
+    return this.sales.findOne(req.user.tenantId, id, req.user);
   }
 
   @Patch(':id')
   update(@Request() req, @Param('id') id: string, @Body() dto: UpdateSaleDto) {
-    return this.sales.update(req.user.tenantId, id, dto, req.user.id);
+    return this.sales.update(req.user.tenantId, id, dto, req.user.id, req.user);
   }
 
   @Patch(':id/status')
   updateStatus(@Request() req, @Param('id') id: string, @Body() body: { status: any; reason?: string }) {
-    return this.sales.updateStatus(req.user.tenantId, id, body.status, req.user.id, body.reason);
-  }
-
-  @Delete(':id')
-  remove(@Request() req, @Param('id') id: string) {
-    return this.sales.remove(req.user.tenantId, id, req.user.id);
-  }
-
-  // Anexo avulso de contrato assinado (vendas fechadas fora do portal Kualiz).
-  @Post(':id/contract-file')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } }))
-  uploadContractFile(@Request() req, @Param('id') id: string, @UploadedFile() file: any) {
-    return this.sales.uploadContractFile(req.user.tenantId, id, file, req.user.id);
+    return this.sales.updateStatus(req.user.tenantId, id, body.status, req.user.id, body.reason, req.user);
   }
 
   @Post('invoices/payment')
