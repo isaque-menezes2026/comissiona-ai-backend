@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { isRestrictedUser, RequestUser } from '../common/scope.util';
 
 function getPeriodRange(periodType: string, periodKey: string): { start: Date; end: Date } {
   if (periodType === 'monthly') {
@@ -44,7 +45,7 @@ function getPeriodRange(periodType: string, periodKey: string): { start: Date; e
 }
 
 // Gera os N periodKeys anteriores (incluindo o atual), do mais antigo pro mais
-// recente, para montar a evolução histórica de uma meta por período.
+// recente, para montar a evolucao historica de uma meta por periodo.
 function previousPeriodKeys(periodType: string, periodKey: string, count: number): string[] {
   const keys: string[] = [];
   if (periodType === 'monthly') {
@@ -83,7 +84,7 @@ function previousPeriodKeys(periodType: string, periodKey: string, count: number
     const [y, w] = periodKey.replace('W', '-').split('-').map(Number);
     for (let i = count - 1; i >= 0; i--) {
       let ww = w - i;
-      // Simplificação: não cruza virada de ano dentro da janela pedida.
+      // Simplificacao: nao cruza virada de ano dentro da janela pedida.
       if (ww < 1) ww = 1;
       keys.push(`${y}-W${ww}`);
     }
@@ -92,7 +93,7 @@ function previousPeriodKeys(periodType: string, periodKey: string, count: number
   return [periodKey];
 }
 
-// Lista os periodKeys mensais ('YYYY-MM') contidos num intervalo de datas —
+// Lista os periodKeys mensais ('YYYY-MM') contidos num intervalo de datas -
 // usado para compor trimestre/semestre/ano a partir das metas mensais.
 function monthlyKeysInRange(start: Date, end: Date): string[] {
   const keys: string[] = [];
@@ -112,12 +113,25 @@ function monthlyKeysInRange(start: Date, end: Date): string[] {
 export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(tenantId: string, filters: { periodType?: string; periodKey?: string; productId?: string; includeInactive?: boolean } = {}) {
+  // Vendedor so ve as proprias metas + metas compartilhadas (sem vendedor
+  // especifico). Parceiro/colaborador nao tem metas individuais neste
+  // modelo, entao so enxergam as metas compartilhadas. Admin/gestor/
+  // financeiro continuam vendo tudo.
+  private scopeWhere(user?: RequestUser): any {
+    if (!isRestrictedUser(user)) return {};
+    if (user!.role === 'SELLER') {
+      return { OR: [{ sellerId: user!.sellerId || '__none__' }, { sellerId: null }] };
+    }
+    return { sellerId: null };
+  }
+
+  async findAll(tenantId: string, filters: { periodType?: string; periodKey?: string; productId?: string; includeInactive?: boolean } = {}, user?: RequestUser) {
     const where: any = { tenantId };
     if (filters.periodType) where.periodType = filters.periodType;
     if (filters.periodKey) where.periodKey = filters.periodKey;
     if (filters.productId) where.productId = filters.productId;
     if (!filters.includeInactive) where.active = true;
+    Object.assign(where, this.scopeWhere(user));
     return this.prisma.goal.findMany({
       where,
       include: {
@@ -129,8 +143,8 @@ export class GoalsService {
   }
 
   // Desativa metas existentes que ocupam o mesmo "slot" (mesmo produto,
-  // vendedor, tipo de período e período) antes de criar/mover uma nova meta
-  // para lá — evita duplicidade de metas ativas para o mesmo escopo.
+  // vendedor, tipo de periodo e periodo) antes de criar/mover uma nova meta
+  // para la - evita duplicidade de metas ativas para o mesmo escopo.
   private async deactivateConflicting(tenantId: string, dto: any, excludeId?: string) {
     const where: any = {
       tenantId,
@@ -164,8 +178,8 @@ export class GoalsService {
     if (dto.startDate !== undefined) data.startDate = dto.startDate ? new Date(dto.startDate) : null;
     if (dto.endDate !== undefined) data.endDate = dto.endDate ? new Date(dto.endDate) : null;
 
-    // Se a edição move a meta pra outro produto/período/vendedor (ou a
-    // reativa), desativa qualquer outra meta que já ocupe esse slot.
+    // Se a edicao move a meta pra outro produto/periodo/vendedor (ou a
+    // reativa), desativa qualquer outra meta que ja ocupe esse slot.
     if (dto.active !== false && (dto.periodType || dto.periodKey || dto.productId !== undefined || dto.sellerId !== undefined)) {
       const current = await this.prisma.goal.findUnique({ where: { id } });
       if (current) {
@@ -185,13 +199,13 @@ export class GoalsService {
     return this.prisma.goal.delete({ where: { id } });
   }
 
-  // Duplica uma meta existente para vários períodos de destino de uma vez
+  // Duplica uma meta existente para varios periodos de destino de uma vez
   // (ex: replicar a meta de julho para agosto, setembro e outubro), evitando
-  // que o usuário precise recriar manualmente mês a mês. Cada período de
+  // que o usuario precise recriar manualmente mes a mes. Cada periodo de
   // destino segue a mesma regra de "inativar conflitante" do create/update.
   async duplicate(tenantId: string, id: string, periodKeys: string[]) {
     const source = await this.prisma.goal.findFirst({ where: { id, tenantId } });
-    if (!source) throw new Error('Meta de origem não encontrada.');
+    if (!source) throw new Error('Meta de origem nao encontrada.');
 
     const targets = [...new Set(periodKeys)].filter(pk => pk && pk !== source.periodKey);
     const created = [];
@@ -237,11 +251,11 @@ export class GoalsService {
     }
 
     // Meta de receita mede o valor RECORRENTE MENSAL (mensalidade) gerado no
-    // período — não a receita total da venda. Sem esse filtro, um item de
-    // implantação/setup (cobrança única, geralmente bem maior que a
-    // mensalidade) contava inteiro como se fosse recorrência mensal e
+    // periodo - nao a receita total da venda. Sem esse filtro, um item de
+    // implantacao/setup (cobranca unica, geralmente bem maior que a
+    // mensalidade) contava inteiro como se fosse recorrencia mensal e
     // inflava o percentual da meta muito acima de 100% (ex: Klingo em
-    // 289% por causa de uma implantação de R$40mil+ numa meta de R$15mil/mês).
+    // 289% por causa de uma implantacao de R$40mil+ numa meta de R$15mil/mes).
     const agg = await this.prisma.saleItem.aggregate({
       where: { ...saleItemWhere, type: 'MONTHLY' },
       _sum: { grossValue: true },
@@ -249,19 +263,19 @@ export class GoalsService {
     return Number(agg._sum?.grossValue || 0);
   }
 
-  // Metas trimestrais/semestrais/anuais que não foram definidas manualmente
-  // são "compostas" ao vivo somando as metas mensais (mesmo produto/vendedor)
-  // que caem dentro do período — sem duplicar nada no banco. Se existir uma
-  // meta explícita para aquele produto/vendedor no período maior, ela vale
-  // (a composição automática só entra como substituto, não sobrepõe).
-  private async getComposedGoals(tenantId: string, periodType: string, periodKey: string, explicitGoals: any[]) {
+  // Metas trimestrais/semestrais/anuais que nao foram definidas manualmente
+  // sao "compostas" ao vivo somando as metas mensais (mesmo produto/vendedor)
+  // que caem dentro do periodo - sem duplicar nada no banco. Se existir uma
+  // meta explicita para aquele produto/vendedor no periodo maior, ela vale
+  // (a composicao automatica so entra como substituto, nao sobrepoe).
+  private async getComposedGoals(tenantId: string, periodType: string, periodKey: string, explicitGoals: any[], user?: RequestUser) {
     if (!['quarterly', 'semiannual', 'yearly'].includes(periodType)) return [];
 
     const { start, end } = getPeriodRange(periodType, periodKey);
     const monthKeys = monthlyKeysInRange(start, end);
 
     const monthlyGoals = await this.prisma.goal.findMany({
-      where: { tenantId, periodType: 'monthly', periodKey: { in: monthKeys }, active: true },
+      where: { tenantId, periodType: 'monthly', periodKey: { in: monthKeys }, active: true, ...this.scopeWhere(user) },
       include: {
         seller: { select: { id: true, name: true } },
         product: { select: { id: true, name: true, color: true } },
@@ -272,7 +286,7 @@ export class GoalsService {
     const groups = new Map<string, any[]>();
     for (const mg of monthlyGoals) {
       const slot = `${mg.productId || 'null'}|${mg.sellerId || 'null'}|${mg.type}`;
-      if (explicitSlots.has(slot)) continue; // meta manual já cobre esse slot
+      if (explicitSlots.has(slot)) continue; // meta manual ja cobre esse slot
       if (!groups.has(slot)) groups.set(slot, []);
       groups.get(slot)!.push(mg);
     }
@@ -314,8 +328,8 @@ export class GoalsService {
     }));
   }
 
-  async getProgress(tenantId: string, periodType: string, periodKey: string) {
-    const goals = await this.findAll(tenantId, { periodType, periodKey });
+  async getProgress(tenantId: string, periodType: string, periodKey: string, user?: RequestUser) {
+    const goals = await this.findAll(tenantId, { periodType, periodKey }, user);
     const { start, end } = getPeriodRange(periodType, periodKey);
     const now = new Date();
 
@@ -326,13 +340,13 @@ export class GoalsService {
       return { ...g, achieved, percentage: Math.min(pct, 999), isValid };
     }));
 
-    const composedResults = await this.getComposedGoals(tenantId, periodType, periodKey, goals);
+    const composedResults = await this.getComposedGoals(tenantId, periodType, periodKey, goals, user);
     return [...explicitResults, ...composedResults];
   }
 
-  // Evolução: retorna o percentual atingido nos últimos N períodos do mesmo
-  // tipo, para o produto/vendedor indicado — inclui metas já inativadas,
-  // pra não perder o histórico quando uma meta é substituída por outra.
+  // Evolucao: retorna o percentual atingido nos ultimos N periodos do mesmo
+  // tipo, para o produto/vendedor indicado - inclui metas ja inativadas,
+  // pra nao perder o historico quando uma meta e substituida por outra.
   async getHistory(tenantId: string, params: { periodType: string; periodKey: string; productId?: string; sellerId?: string; count?: number }) {
     const count = params.count && params.count > 0 ? params.count : 6;
     const keys = previousPeriodKeys(params.periodType, params.periodKey, count);
@@ -357,8 +371,8 @@ export class GoalsService {
       if (goal.type === 'quantity') {
         achieved = await this.prisma.saleItem.count({ where: saleItemWhere });
       } else {
-        // Mesma correção do computeAchieved: receita de meta = só mensalidade
-        // recorrente (MONTHLY), não a venda inteira (implantação inclusa).
+        // Mesma correcao do computeAchieved: receita de meta = so mensalidade
+        // recorrente (MONTHLY), nao a venda inteira (implantacao inclusa).
         const agg = await this.prisma.saleItem.aggregate({
           where: { ...saleItemWhere, type: 'MONTHLY' },
           _sum: { grossValue: true },
