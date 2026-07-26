@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { ownerWhere, isRestrictedUser, RequestUser } from '../common/scope.util';
 
 @Injectable()
 export class ReportsService {
@@ -29,8 +30,8 @@ export class ReportsService {
   }
 
   async commissionsByProduct(tenantId: string, from: string, to: string) {
-    // Exclui canceladas: quando uma venda é editada, as comissões antigas são
-    // canceladas e perdem o vínculo com o item de venda (saleItemId fica null),
+    // Exclui canceladas: quando uma venda e editada, as comissoes antigas sao
+    // canceladas e perdem o vinculo com o item de venda (saleItemId fica null),
     // o que fazia elas aparecerem aqui como um produto fantasma "N/A".
     const items = await this.prisma.commission.findMany({
       where: { tenantId, status: { not: 'CANCELLED' }, createdAt: { gte: new Date(from), lte: new Date(to) } },
@@ -78,9 +79,11 @@ export class ReportsService {
     }));
   }
 
-  async dashboardSummary(tenantId: string) {
+  async dashboardSummary(tenantId: string, user?: RequestUser) {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const scope = ownerWhere(user);
+    const restricted = isRestrictedUser(user);
 
     const [
       predicted,
@@ -94,17 +97,17 @@ export class ReportsService {
       commissionsThisMonthAgg,
     ] = await Promise.all([
       this.prisma.commission.aggregate({
-        where: { tenantId, status: 'PREDICTED' },
+        where: { tenantId, status: 'PREDICTED', ...scope },
         _sum: { amount: true },
         _count: true,
       }),
       this.prisma.commission.aggregate({
-        where: { tenantId, status: 'RELEASED' },
+        where: { tenantId, status: 'RELEASED', ...scope },
         _sum: { amount: true },
         _count: true,
       }),
       this.prisma.commission.aggregate({
-        where: { tenantId, status: 'PAID' },
+        where: { tenantId, status: 'PAID', ...scope },
         _sum: { amount: true },
         _count: true,
       }),
@@ -113,6 +116,7 @@ export class ReportsService {
           tenantId,
           saleDate: { gte: monthStart },
           status: { not: 'CANCELLED' },
+          ...scope,
         },
         include: {
           items: true,
@@ -122,45 +126,49 @@ export class ReportsService {
         orderBy: { saleDate: 'desc' },
         take: 10,
       }),
-      this.prisma.commission.groupBy({
-        by: ['sellerId'],
-        where: { tenantId, sellerId: { not: null } },
-        _sum: { amount: true },
-        _count: true,
-        orderBy: { _sum: { amount: 'desc' } },
-        take: 5,
-      }),
+      restricted
+        ? Promise.resolve([])
+        : this.prisma.commission.groupBy({
+            by: ['sellerId'],
+            where: { tenantId, sellerId: { not: null } },
+            _sum: { amount: true },
+            _count: true,
+            orderBy: { _sum: { amount: 'desc' } },
+            take: 5,
+          }),
       this.prisma.commission.groupBy({
         by: ['status'],
-        where: { tenantId },
+        where: { tenantId, ...scope },
         _sum: { amount: true },
         _count: true,
       }),
-      // MRR: soma das mensalidades líquidas de vendas ativas
+      // MRR: soma das mensalidades liquidas de vendas ativas
       this.prisma.saleItem.aggregate({
         where: {
           type: 'MONTHLY',
-          sale: { tenantId, status: { notIn: ['CANCELLED', 'SUSPENDED'] } },
+          sale: { tenantId, status: { notIn: ['CANCELLED', 'SUSPENDED'] }, ...scope },
         },
         _sum: { netValue: true },
       }),
-      // Receita bruta de vendas fechadas este mês
+      // Receita bruta de vendas fechadas este mes
       this.prisma.saleItem.aggregate({
         where: {
           sale: {
             tenantId,
             saleDate: { gte: monthStart },
             status: { not: 'CANCELLED' },
+            ...scope,
           },
         },
         _sum: { grossValue: true },
       }),
-      // Total de comissões geradas este mês
+      // Total de comissoes geradas este mes
       this.prisma.commission.aggregate({
         where: {
           tenantId,
           status: { not: 'CANCELLED' },
           createdAt: { gte: monthStart },
+          ...scope,
         },
         _sum: { amount: true },
       }),
