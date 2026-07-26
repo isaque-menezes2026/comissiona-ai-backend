@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CommissionEngineService } from '../commission-engine/commission-engine.service';
+import { ownerWhere, ownsRecord, isRestrictedUser, RequestUser } from '../common/scope.util';
 
 @Injectable()
 export class CommissionsService {
@@ -11,11 +12,19 @@ export class CommissionsService {
     private engine: CommissionEngineService,
   ) {}
 
-  async findAll(tenantId: string, filters: any = {}) {
+  async findAll(tenantId: string, filters: any = {}, user?: RequestUser) {
     const where: any = { tenantId };
     if (filters.status) where.status = filters.status;
-    if (filters.sellerId) where.sellerId = filters.sellerId;
     if (filters.month) where.expectedPaymentCompetence = filters.month;
+
+    // Vendedor/parceiro/colaborador so enxergam as proprias comissoes -
+    // admin, gestor comercial e financeiro continuam vendo tudo do tenant.
+    if (isRestrictedUser(user)) {
+      Object.assign(where, ownerWhere(user));
+    } else if (filters.sellerId) {
+      where.sellerId = filters.sellerId;
+    }
+
     return this.prisma.commission.findMany({
       where,
       include: {
@@ -29,50 +38,32 @@ export class CommissionsService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(tenantId: string, id: string, user?: RequestUser) {
     const c = await this.prisma.commission.findFirst({
       where: { id, tenantId },
       include: { sale: { include: { customer: true, seller: true } }, saleItem: { include: { product: true } }, seller: true, partner: true, rule: true },
     });
     if (!c) throw new NotFoundException('Comissao nao encontrada');
+    if (!ownsRecord(user, c)) throw new NotFoundException('Comissao nao encontrada');
     return c;
   }
 
-  async findMySummary(tenantId: string, sellerId: string) {
+  async findMySummary(tenantId: string, sellerId: string, user?: RequestUser) {
+    const scope = user ? ownerWhere(user) : (sellerId ? { sellerId } : {});
     const currentMonth = new Date().toISOString().slice(0, 7);
     const [predicted, released, paid, thisMonth] = await Promise.all([
-      this.prisma.commission.aggregate({ where: { tenantId, sellerId, status: 'PREDICTED' }, _sum: { amount: true }, _count: true }),
-      this.prisma.commission.aggregate({ where: { tenantId, sellerId, status: 'RELEASED' }, _sum: { amount: true }, _count: true }),
-      this.prisma.commission.aggregate({ where: { tenantId, sellerId, status: 'PAID' }, _sum: { amount: true }, _count: true }),
-      this.prisma.commission.aggregate({ where: { tenantId, sellerId, expectedPaymentCompetence: currentMonth }, _sum: { amount: true } }),
+      this.prisma.commission.aggregate({ where: { tenantId, ...scope, status: 'PREDICTED' }, _sum: { amount: true }, _count: true }),
+      this.prisma.commission.aggregate({ where: { tenantId, ...scope, status: 'RELEASED' }, _sum: { amount: true }, _count: true }),
+      this.prisma.commission.aggregate({ where: { tenantId, ...scope, status: 'PAID' }, _sum: { amount: true }, _count: true }),
+      this.prisma.commission.aggregate({ where: { tenantId, ...scope, expectedPaymentCompetence: currentMonth }, _sum: { amount: true } }),
     ]);
     const recent = await this.prisma.commission.findMany({
-      where: { tenantId, sellerId },
+      where: { tenantId, ...scope },
       include: { saleItem: { include: { product: { select: { name: true } } } }, sale: { include: { customer: { select: { companyName: true } } } } },
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
     return { predicted, released, paid, thisMonth, recent };
-  }
-
-  // Exclusão definitiva de uma comissão. Só permitida se ela NÃO estiver paga
-  // (comissão paga precisa ficar no histórico). Usado para remover comissões
-  // criadas por erro de configuração de regra (ex: regra sem restrição de
-  // origem gerando cobrança duplicada) — o cancelamento sozinho mantém a
-  // linha na tela; aqui de fato some da lista.
-  async remove(tenantId: string, id: string, userId: string) {
-    const c = await this.prisma.commission.findFirst({ where: { id, tenantId } });
-    if (!c) throw new NotFoundException('Comissão não encontrada.');
-    if (c.status === 'PAID') {
-      throw new BadRequestException('Esta comissão já foi paga e não pode ser excluída. Comissões pagas ficam no histórico.');
-    }
-    const paymentItemCount = await this.prisma.paymentItem.count({ where: { commissionId: id } });
-    if (paymentItemCount > 0) {
-      throw new BadRequestException('Esta comissão já está vinculada a um lote de pagamento e não pode ser excluída.');
-    }
-    await this.prisma.commission.delete({ where: { id } });
-    await this.audit.log({ tenantId, userId, action: 'DELETE', entity: 'commission', entityId: id, previousData: c });
-    return { message: 'Comissão excluída com sucesso.' };
   }
 
   async cancel(tenantId: string, id: string, reason: string, userId: string) {
@@ -85,28 +76,6 @@ export class CommissionsService {
     return updated;
   }
 
-  // Recalcula apenas o texto de previsão (forecastReason/forecastStatus) das
-  // comissões já existentes, sem mexer em valor/status/datas. Usado uma vez
-  // após corrigir o texto que era genérico ("Contrato convertido/faturado")
-  // para refletir o gatilho real da regra.
-  async refreshForecastText(tenantId: string) {
-    return this.engine.refreshForecastText(tenantId);
-  }
-
-  // Corrige regras de comissão recorrente/percentual do vendedor que estavam
-  // sem restrição de origem (valiam também para vendas de parceiro/colaborador,
-  // pagando o vendedor duas vezes pela mesma venda) e cancela as comissões já
-  // criadas que ficaram indevidas por causa disso.
-  async fixOriginScoping(tenantId: string) {
-    const rulesUpdated = await this.engine.restrictRecurringRulesToDirectOrigin(tenantId);
-    const commissionsCancelled = await this.engine.reconcilePendingCommissions(tenantId);
-    return {
-      message: `${rulesUpdated} regra(s) restrita(s) a venda direta. ${commissionsCancelled} comissão(ões) indevida(s) cancelada(s).`,
-      rulesUpdated,
-      commissionsCancelled,
-    };
-  }
-
   async processInvoice(tenantId: string, dto: { saleId: string; installmentNum: number; paidAmount: number; paidAt?: string }, userId: string) {
     await this.prisma.invoice.updateMany({
       where: { tenantId, saleId: dto.saleId, installmentNum: dto.installmentNum },
@@ -114,39 +83,5 @@ export class CommissionsService {
     });
     await this.engine.processInvoicePaid(tenantId, dto.saleId, dto.installmentNum, userId);
     return { message: 'Parcela ' + dto.installmentNum + ' processada com sucesso' };
-  }
-
-  // Marca uma ou mais comissões diretamente como PAGA, sem passar pelo fluxo de fatura/parcela.
-  // Ignora silenciosamente ids que já estão PAID/CANCELLED (não elegíveis).
-  async markPaid(tenantId: string, ids: string[], userId: string) {
-    if (!ids || ids.length === 0) {
-      return { message: 'Nenhuma comissão selecionada.', count: 0 };
-    }
-
-    const commissions = await this.prisma.commission.findMany({
-      where: { tenantId, id: { in: ids } },
-    });
-    const eligibleIds = commissions
-      .filter((c) => c.status !== 'PAID' && c.status !== 'CANCELLED')
-      .map((c) => c.id);
-
-    if (eligibleIds.length === 0) {
-      return { message: 'Nenhuma das comissões selecionadas é elegível para pagamento.', count: 0 };
-    }
-
-    await this.prisma.commission.updateMany({
-      where: { tenantId, id: { in: eligibleIds } },
-      data: { status: 'PAID', paidAt: new Date() },
-    });
-
-    await this.audit.log({
-      tenantId,
-      userId,
-      action: 'COMMISSIONS_MARKED_PAID',
-      entity: 'commission',
-      metadata: { ids: eligibleIds, count: eligibleIds.length },
-    });
-
-    return { message: `${eligibleIds.length} comissão(ões) marcada(s) como paga(s).`, count: eligibleIds.length };
   }
 }
