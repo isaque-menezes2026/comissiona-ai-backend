@@ -15,6 +15,7 @@ export interface CreateSaleDto {
   taxRate: number;
   saleDate: string;
   contractDate?: string;
+  contractFileUrl?: string;
   billingStartDate?: string;
   notes?: string;
   items: Array<{
@@ -35,6 +36,7 @@ export interface UpdateSaleDto {
   taxRate?: number;
   saleDate?: string;
   contractDate?: string;
+  contractFileUrl?: string;
   billingStartDate?: string;
   notes?: string;
   status?: SaleStatus;
@@ -81,6 +83,7 @@ export class SalesService {
         taxRate: taxRateDecimal,
         saleDate: new Date(dto.saleDate),
         contractDate: dto.contractDate ? new Date(dto.contractDate) : null,
+        contractFileUrl: dto.contractFileUrl || null,
         billingStartDate: dto.billingStartDate ? new Date(dto.billingStartDate) : null,
         notes: dto.notes,
         items: {
@@ -141,6 +144,7 @@ export class SalesService {
     if (dto.taxRate !== undefined) updateData.taxRate = taxRateDecimal;
     if (dto.saleDate !== undefined) updateData.saleDate = new Date(dto.saleDate);
     if (dto.contractDate !== undefined) updateData.contractDate = dto.contractDate ? new Date(dto.contractDate) : null;
+    if (dto.contractFileUrl !== undefined) updateData.contractFileUrl = dto.contractFileUrl || null;
     if (dto.billingStartDate !== undefined) updateData.billingStartDate = dto.billingStartDate ? new Date(dto.billingStartDate) : null;
     if (dto.notes !== undefined) updateData.notes = dto.notes;
     if (dto.status !== undefined) {
