@@ -1,19 +1,28 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { ownerWhere, ownsRecord, isRestrictedUser, RequestUser } from '../common/scope.util';
 
 @Injectable()
 export class CustomersService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(tenantId: string, filters: any = {}) {
+  async findAll(tenantId: string, filters: any = {}, user?: RequestUser) {
     const where: any = { tenantId };
     if (filters.status) where.status = filters.status;
-    if (filters.sellerId) where.sellerId = filters.sellerId;
     if (filters.search) where.OR = [
       { companyName: { contains: filters.search, mode: 'insensitive' } },
       { tradeName: { contains: filters.search, mode: 'insensitive' } },
       { document: { contains: filters.search } },
     ];
+
+    // Vendedor/parceiro/colaborador so enxergam os proprios clientes - admin,
+    // gestor comercial e financeiro continuam vendo todos do tenant.
+    if (isRestrictedUser(user)) {
+      Object.assign(where, ownerWhere(user));
+    } else if (filters.sellerId) {
+      where.sellerId = filters.sellerId;
+    }
+
     return this.prisma.customer.findMany({
       where,
       include: {
@@ -24,7 +33,7 @@ export class CustomersService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(tenantId: string, id: string, user?: RequestUser) {
     const c = await this.prisma.customer.findFirst({
       where: { id, tenantId },
       include: {
@@ -33,6 +42,7 @@ export class CustomersService {
       },
     });
     if (!c) throw new NotFoundException('Cliente não encontrado');
+    if (!ownsRecord(user, c)) throw new NotFoundException('Cliente não encontrado');
     return c;
   }
 
@@ -43,21 +53,5 @@ export class CustomersService {
   async update(tenantId: string, id: string, dto: any) {
     await this.findOne(tenantId, id);
     return this.prisma.customer.update({ where: { id }, data: dto });
-  }
-
-  // Exclusão só é permitida se o cliente não tiver nenhuma venda associada.
-  // Caso contrário, orienta a inativar (status = 'inactive') em vez de excluir.
-  async remove(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
-
-    const salesCount = await this.prisma.sale.count({ where: { tenantId, customerId: id } });
-    if (salesCount > 0) {
-      throw new BadRequestException(
-        'Este cliente possui vendas associadas e não pode ser excluído. Marque o status como "Inativo" em vez de excluir.',
-      );
-    }
-
-    await this.prisma.customer.delete({ where: { id } });
-    return { message: 'Cliente excluído com sucesso.' };
   }
 }
