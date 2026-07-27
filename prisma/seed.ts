@@ -75,7 +75,7 @@ async function main() {
       // Klingo via parceiro — parceiro recebe 1a mensalidade completa
       { name: 'Klingo - 1a Mensalidade (100%) — Parceiro', productId: products['Klingo'].id, saleOrigin: 'partner', beneficiaryType: 'PARTNER', commissionType: 'FIRST_MONTHLY_PAYMENT', percentage: 100, triggerEvent: 'FIRST_INVOICE_PAID', appliesAfterDays: 30 },
       // Klingo via parceiro — vendedor recebe R$50 fixo
-      { name: 'Klingo - Valor Fixo R$50 — Vendedor em venda de Parceiro', productId: products['Klingo'].id, saleOrigin: 'partner', beneficiaryType: 'SELLER', commissionType: 'FIXED_AMOUNT', fixedAmount: 50, triggerEvent: 'FIRST_INVOICE_PAID', appliesAfterDays: 30 },
+      { name: 'Klingo - Valor Fixo R$80 — Vendedor em venda de Parceiro', productId: products['Klingo'].id, saleOrigin: 'partner', beneficiaryType: 'SELLER', commissionType: 'FIXED_AMOUNT', fixedAmount: 80, triggerEvent: 'FIRST_INVOICE_PAID', appliesAfterDays: 30 },
       // Kualiz e modulos — vendedor recebe 3a mensalidade completa
       { name: 'Kualiz Base - 3a Mensalidade (100%)', productId: products['Kualiz Base'].id, beneficiaryType: 'SELLER', commissionType: 'THIRD_MONTHLY_PAYMENT', percentage: 100, triggerEvent: 'THIRD_INVOICE_PAID', appliesAfterDays: 90 },
       { name: 'Kualiz CRM - 3a Mensalidade (100%)',  productId: products['Kualiz CRM'].id,  beneficiaryType: 'SELLER', commissionType: 'THIRD_MONTHLY_PAYMENT', percentage: 100, triggerEvent: 'THIRD_INVOICE_PAID', appliesAfterDays: 90 },

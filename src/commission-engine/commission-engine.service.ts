@@ -63,12 +63,17 @@ export class CommissionEngineService {
     const rules = await this.findApplicableRules(sale, item);
 
     for (const rule of rules) {
+      // Regras FIXED_AMOUNT são por VENDA, não por item: uma venda com 2 itens do
+      // mesmo produto deve gerar a comissão fixa uma única vez. Por isso a checagem
+      // de duplicidade ignora o saleItemId nesse caso (dedupe por tenant+venda+regra).
+      // Regras percentuais e de mensalidade continuam sendo por item (dedupe inclui saleItemId).
+      const isFixedRule = rule.commissionType === CommissionType.FIXED_AMOUNT;
       const exists = await this.prisma.commission.findFirst({
         where: {
           tenantId: ctx.tenantId,
           saleId: sale.id,
-          saleItemId: item.id,
           ruleId: rule.id,
+          ...(isFixedRule ? {} : { saleItemId: item.id }),
         },
       });
       if (exists) continue;
