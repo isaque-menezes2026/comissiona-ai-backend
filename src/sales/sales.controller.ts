@@ -2,10 +2,12 @@ import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Request } 
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SalesService, CreateSaleDto, UpdateSaleDto, RegisterInvoicePaymentDto } from './sales.service';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles, ROLE_GROUPS } from '../common/decorators/roles.decorator';
 
 @ApiTags('sales')
 @ApiBearerAuth()
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('sales')
 export class SalesController {
   constructor(private sales: SalesService) {}
@@ -36,6 +38,7 @@ export class SalesController {
   }
 
   @Post('invoices/payment')
+  @Roles(...ROLE_GROUPS.MANAGEMENT)
   registerInvoicePayment(@Request() req, @Body() dto: RegisterInvoicePaymentDto) {
     return this.sales.registerInvoicePayment(req.user.tenantId, dto, req.user.id);
   }

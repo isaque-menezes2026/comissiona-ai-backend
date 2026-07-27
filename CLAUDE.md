@@ -20,7 +20,7 @@ npm run prisma:seed       # ts-node prisma/seed.ts
 npm run db:setup          # migrate deploy + seed, em sequência
 ```
 
-Não existe suite de testes configurada (sem script `test` no `package.json`, sem Jest/Vitest instalado). Se for adicionar testes, é preciso montar a infraestrutura do zero.
+Testes com **Jest + ts-jest** (`npm test`). Config em `jest.config.js`; specs em `*.spec.ts` ao lado do código. Hoje cobrem o mais crítico: deduplicação do motor de comissão (`commission-engine.service.spec.ts`) e o `RolesGuard` (`common/guards/roles.guard.spec.ts`). Specs ficam fora do build de produção via `tsconfig.build.json` (usado pelo `nest build`). Ainda falta cobertura ampla — expandir a partir dessa base.
 
 Swagger fica disponível em `/api/docs` quando o servidor está no ar (montado em `main.ts`).
 
@@ -52,7 +52,7 @@ Monólito modular NestJS, um módulo por domínio em `src/<dominio>/` (controlle
 - Papéis (`UserRole` no schema): `ADMIN`, `SALES_MANAGER`, `FINANCIAL` (irrestritos — veem tudo do tenant) e `SELLER`, `PARTNER`, `EMPLOYEE` (restritos aos próprios registros).
 - O escopo por papel é centralizado em `src/common/scope.util.ts`: `isRestrictedUser(user)`, `ownerWhere(user)` (monta o `where` do Prisma pra listagens) e `ownsRecord(user, record)` (checagem pontual em `findOne`/`update`). Todo service que precisa restringir dados por vendedor/parceiro/colaborador usa esses helpers — não reinventar a checagem em cada módulo.
 - Hoje isso está aplicado em `sales`, `commissions`, `customers`, `goals` e no dashboard de `reports`. Os relatórios gerenciais (ranking, by-seller, by-product, by-period, pending-payments) são bloqueados por completo pra papéis restritos (`ForbiddenException` no controller).
-- Endpoints de escrita (cancelar comissão, aprovar pagamento etc.) ainda **não** têm guard de autorização por papel além do que já existe — só as leituras foram escopadas até agora. Se for expandir o controle de acesso, esse é o próximo lugar óbvio.
+- **Autorização por papel nos endpoints de escrita** já existe via `@Roles(...)` (`common/decorators/roles.decorator.ts`) + `RolesGuard` (`common/guards/roles.guard.ts`). É **opt-in**: endpoint sem `@Roles` não sofre restrição de papel (leituras e fluxos self-service — ex.: vendedor cadastrando a própria venda/cliente — seguem abertos, só escopados por `scope.util`). Grupos prontos em `ROLE_GROUPS`: `MANAGEMENT` (ADMIN/SALES_MANAGER/FINANCIAL — cancelar comissão, process-invoice, registrar pagamento de fatura, CRUD de regras/produtos/metas/pessoas), `FINANCE` (ADMIN/FINANCIAL — criar/aprovar/marcar-pago lote de pagamento; segregação de função) e `ADMIN_ONLY` (config do tenant, criação de usuário, reset de senha). O `RolesGuard` deve vir **depois** do `AuthGuard('jwt')` em `@UseGuards` (ordem importa — precisa de `req.user` populado).
 
 ### Motor de comissão (`src/commission-engine/commission-engine.service.ts`)
 
@@ -64,7 +64,7 @@ Fluxo (`processSale`):
    - **Cuidado:** `saleOrigin: null` na regra significa "vale pra qualquer origem". Uma regra pensada só pra vendas de parceiro que fique com `saleOrigin` null por engano passa a valer também pra vendas diretas — isso já causou comissão indevida em produção (ver histórico de commits/patches SQL). Ao criar regra nova, sempre definir `saleOrigin` explicitamente quando ela não deve valer pra "qualquer origem".
    - Regra com `beneficiaryType: PARTNER` só se aplica se a venda tiver `partnerId`; `EMPLOYEE` só se tiver `employeeId`; `SELLER` só se tiver `sellerId`. Venda 100% de parceiro sem vendedor interno não gera nada pro vendedor.
 3. Calcula o valor (`calculateCommission`) conforme `commissionType`: percentual sobre implantação, percentual/1ª/3ª mensalidade (todos exigem `item.type` bater com `IMPLANTATION`/`MONTHLY`), ou `FIXED_AMOUNT` (valor fixo — só desconta imposto se for beneficiário `PARTNER` e a regra tiver `appliesOnNetAmount`).
-   - **Bug conhecido, não corrigido:** uma regra `FIXED_AMOUNT` é avaliada **por item de venda** (`processItem` roda em loop por `sale.items`), então uma venda com 2 itens do mesmo produto gera a comissão fixa 2x. Até agora isso foi resolvido manualmente cancelando os registros duplicados via SQL toda vez que acontece — não há correção no motor ainda.
+   - **Comissão fixa por venda (corrigido):** regras `FIXED_AMOUNT` deduplicam por `(tenantId, saleId, ruleId)` ignorando o `saleItemId` — uma venda com 2 itens do mesmo produto gera a comissão fixa **uma vez só**. Regras percentuais e de mensalidade continuam por item (dedupe inclui `saleItemId`). Ver a checagem em `processItem` e o teste em `commission-engine.service.spec.ts`. (Antes o motor avaliava fixo por item, gerando duplicata — resolvida manualmente via SQL.)
 4. Grava `Commission` com status inicial (`resolveInitialStatus`) e uma previsão de recebimento (`calculateForecast`): datas estimadas de faturamento/pagamento/liberação e a competência prevista, baseadas em `appliesAfterDays` da regra (padrão 90 dias pra 3ª mensalidade, 30 pra 1ª mensalidade/implantação, 15 pra valor fixo).
 
 Ciclo de vida do `CommissionStatus`: `PREDICTED` → (`BLOCKED` se a regra exige aprovação manual) → `RELEASED` (quando `processInvoicePaid` confirma o gatilho certo — 1ª fatura, 3ª fatura, qualquer fatura, ou aprovação manual) → `PAID` (marcado manualmente na tela de Comissões) ou `CANCELLED`/`REVERSED`.
