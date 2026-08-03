@@ -12,6 +12,11 @@ export const EXTERNAL_PRODUCT_KEY_MAP: Record<string, string> = {
   CRM: 'Kualiz CRM',
   TELEPHONY: 'Kualiz PABX',
   AI_ATTENDANCE: 'Kualiz IA de Atendimento',
+  // "IA com Integração - Klingo" (item_type AI_ATTENDANCE_INTEGRATED no portal Kualiz)
+  // é a variante de IA de Atendimento integrada ao Klingo (cobrada por agente, mesma
+  // família da IA de Atendimento) — NÃO é a "Marcação Klingo" (AI_KLINGO, por agenda).
+  // Por isso comissiona como o produto "Kualiz IA de Atendimento".
+  AI_ATTENDANCE_INTEGRATED: 'Kualiz IA de Atendimento',
   API: 'Kualiz API',
   API_INTEGRATION: 'Kualiz API',
   AI_KLINGO: 'Kualiz IA Marcacao Cons/Ex Klingo',
