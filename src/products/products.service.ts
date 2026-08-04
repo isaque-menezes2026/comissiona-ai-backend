@@ -28,7 +28,19 @@ export class ProductsService {
 
   async update(tenantId: string, id: string, dto: any) {
     await this.findOne(tenantId, id);
-    return this.prisma.product.update({ where: { id }, data: dto });
+    // Só permite alterar campos de cadastro — ignora id/tenantId/createdAt/modules
+    // e qualquer coisa a mais que o cliente mande (evita quebra do Prisma e
+    // adulteração de tenant).
+    const allowed = [
+      'name', 'description', 'category', 'type', 'parentId', 'color',
+      'hasImplantation', 'hasMonthly', 'allowsUpsell', 'allowsCrossSell',
+      'generatesCommission', 'active',
+    ];
+    const data: any = {};
+    for (const key of allowed) {
+      if (dto[key] !== undefined) data[key] = dto[key];
+    }
+    return this.prisma.product.update({ where: { id }, data });
   }
 
   async remove(tenantId: string, id: string) {
