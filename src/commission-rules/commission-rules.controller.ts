@@ -13,6 +13,7 @@ export class CommissionRulesController {
   constructor(private svc: CommissionRulesService) {}
 
   @Get() findAll(@Request() req) { return this.svc.findAll(req.user.tenantId); }
+  @Get(':id/history') history(@Request() req, @Param('id') id: string) { return this.svc.getHistory(req.user.tenantId, id); }
   @Get(':id') findOne(@Request() req, @Param('id') id: string) { return this.svc.findOne(req.user.tenantId, id); }
 
   @Post()
