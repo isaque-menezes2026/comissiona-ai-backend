@@ -71,6 +71,14 @@ Ciclo de vida do `CommissionStatus`: `PREDICTED` → (`BLOCKED` se a regra exige
 
 Métodos de manutenção pontual expostos via endpoints (chamados por botões na tela de Comissões do frontend): `restrictRecurringRulesToDirectOrigin`, `reconcilePendingCommissions`, `refreshForecastText`. Não são cron jobs — rodam sob demanda quando alguém clica no botão correspondente.
 
+### Gestão de regras: edição, vigência e histórico (`src/commission-rules/`)
+
+As regras são **editáveis** pela tela (`/regras`, botão "Editar") via `PATCH /commission-rules/:id`. `create`/`update` passam por `sanitize()` no service: aplica só uma **whitelist** de campos de cadastro (ignora `id`/`tenantId`/`createdAt`/relação `product` etc. — evita quebra do Prisma e adulteração de tenant) e normaliza datas (`startDate`/`endDate`) e números.
+
+**Vigência:** `startDate`/`endDate` na regra definem a partir de/até quando ela vale — o motor (`findApplicableRules`) já filtra por essas datas. A tela expõe esses campos e também a **Origem da venda** (`saleOrigin`: direct/partner/employee/vazio=todas), reforçando o cuidado do `saleOrigin` citado acima.
+
+**Histórico:** não há tabela nova — reaproveita `audit_logs` (`previousData`/`newData`). `create`/`update`/`remove` gravam snapshot antes/depois via `AuditService`. `GET /commission-rules/:id/history` (escopado por tenant) devolve o histórico, e a tela mostra "antes → depois", quem e quando. **Editar uma regra NÃO altera comissões já geradas** (cada `Commission` guarda o próprio valor); a mudança só afeta cálculos futuros, conforme a vigência.
+
 ### Integrações externas (`src/integrations/`)
 
 Endpoints server-to-server pra sistemas externos (hoje: `kualiz-portal`, que gera propostas/contratos) criarem vendas, clientes e vendedores no Comissiona automaticamente. Autenticação é por header `x-integration-key` comparado com `INTEGRATION_API_KEY` (`IntegrationKeyGuard`) — **não** usa JWT de usuário. A chave precisa estar configurada igual nos dois lados (variável de ambiente do sistema externo e do Comissiona); mismatch é uma causa comum de erro "Chave de integração inválida" (o guard loga um mascaramento da chave recebida vs. esperada pra facilitar diagnosticar espaço/quebra de linha a mais).
