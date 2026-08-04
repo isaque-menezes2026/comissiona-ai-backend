@@ -12,15 +12,19 @@ export const EXTERNAL_PRODUCT_KEY_MAP: Record<string, string> = {
   CRM: 'Kualiz CRM',
   TELEPHONY: 'Kualiz PABX',
   AI_ATTENDANCE: 'Kualiz IA de Atendimento',
-  // "IA com Integração - Klingo" (item_type AI_ATTENDANCE_INTEGRATED no portal Kualiz)
-  // é a variante de IA de Atendimento integrada ao Klingo (cobrada por agente, mesma
-  // família da IA de Atendimento) — NÃO é a "Marcação Klingo" (AI_KLINGO, por agenda).
-  // Por isso comissiona como o produto "Kualiz IA de Atendimento".
-  AI_ATTENDANCE_INTEGRATED: 'Kualiz IA de Atendimento',
+  // "IA com Integração - Klingo" (AI_ATTENDANCE_INTEGRATED) = serviço de confirmações
+  // integrado Kualiz/Klingo → produto "Kualiz/Klingo - Confirmacoes" (definido com o
+  // comercial no de-para de 2026-08). NÃO é a IA de Atendimento (sem integração, que é
+  // AI_ATTENDANCE) nem a Marcação Klingo (AI_KLINGO, por agenda).
+  AI_ATTENDANCE_INTEGRATED: 'Kualiz/Klingo - Confirmacoes',
   API: 'Kualiz API',
   API_INTEGRATION: 'Kualiz API',
   AI_KLINGO: 'Kualiz IA Marcacao Cons/Ex Klingo',
   KLINGO: 'Klingo',
+  // Agente adicional (proposta Kualiz) comissiona pelo produto-mãe Omnichannel.
+  EXTRA_AGENT: 'Kualiz Omnichannel',
+  // Módulo KLIS (do Klingo).
+  KLIS: 'KLIS',
   // Adicionados em 2026-07-23. Chutes de código com base no nome do produto —
   // se o portal Kualiz mandar um item_type diferente desses, o fallback por
   // nome logo abaixo (resolveProductId) cobre o caso mesmo assim.
@@ -232,6 +236,11 @@ export class IntegrationsService {
     }> = [];
 
     for (const item of dto.items) {
+      // Itens avulsos do portal (productKey CUSTOM_*) não têm produto fixo e, por decisão
+      // comercial (de-para 2026-08), NÃO comissionam — são ignorados na conversão da venda.
+      if (!item.productId && item.productKey && item.productKey.startsWith('CUSTOM_')) {
+        continue;
+      }
       const productId = await this.resolveProductId(tenantId, item);
       items.push({
         productId,
