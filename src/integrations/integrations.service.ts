@@ -251,6 +251,14 @@ export class IntegrationsService {
       });
     }
 
+    // Se todos os itens enviados eram avulsos (CUSTOM_*, ignorados acima), não sobra
+    // nada comissionável — não cria venda vazia.
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'A venda não tem itens comissionáveis (todos os itens enviados são avulsos/CUSTOM).',
+      );
+    }
+
     const systemUserId = await this.getSystemUserId(tenantId);
 
     // Normaliza a origem: se o sistema externo mandou um texto livre (ex: descrevendo
