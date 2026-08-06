@@ -102,3 +102,55 @@ O `.env.example` do repo está incompleto. As variáveis realmente usadas no có
 ## `prisma/seed.ts` não é fonte de verdade do estado atual
 
 O seed cria o tenant, produtos, admin e regras de comissão *na primeira vez* que roda (é idempotente via `findFirst`/`findUnique`, não sobrescreve o que já existe). Mas o banco de produção já foi editado diretamente por SQL várias vezes desde então (troca de e-mail do admin, correção de `saleOrigin` de regras, cancelamento de comissões indevidas etc.), então **o conteúdo do seed pode estar desatualizado em relação ao que está realmente em produção** (ex: o seed ainda define uma regra de R$50 fixo pro vendedor em venda de parceiro do Klingo, enquanto a regra real em produção hoje é R$80). Não rodar `db:setup`/`prisma:seed` em produção assumindo que ele reflete o estado atual — sempre conferir a tabela `commission_rules` direto no banco antes de mudar algo relacionado a regras.
+
+
+---
+
+# Regras obrigatórias de desenvolvimento
+
+> Lido pelo Claude no início de toda conversa deste projeto (vai no git → vale para qualquer usuário/colega).
+
+## Sempre procure a melhor forma para economizar tokens
+
+## Integridade completa do sistema
+
+Nunca implemente uma funcionalidade de forma isolada.
+
+Antes de alterar qualquer funcionalidade, analise os impactos em todo o sistema, incluindo:
+
+- frontend;
+- backend;
+- banco de dados;
+- APIs;
+- autenticação e permissões;
+- menus e rotas;
+- integrações externas;
+- eventos, filas e automações;
+- regras de negócio;
+- experiência do usuário;
+- testes e documentação.
+
+Garanta que todas as dependências, integrações e fluxos relacionados sejam atualizados.
+
+Não deixe: código incompleto; telas desconectadas; APIs sem utilização ou sem tratamento; referências órfãs; rotas quebradas; menus apontando para páginas inexistentes; funcionalidades parcialmente implementadas; inconsistências entre banco de dados, backend e frontend; configurações temporárias em produção; dados simulados ou mocks no fluxo final; regressões em funcionalidades existentes.
+
+Antes de considerar uma tarefa concluída:
+
+1. Revise o impacto global da alteração.
+2. Execute os testes existentes.
+3. Crie ou atualize os testes necessários.
+4. Verifique os fluxos principais e alternativos.
+5. Valide tratamento de erros e estados vazios.
+6. Confirme permissões e segurança.
+7. Verifique integração entre frontend, backend e banco de dados.
+8. Confirme que nenhuma funcionalidade existente foi quebrada.
+
+Se identificar uma inconsistência diretamente relacionada à tarefa, trate-a como parte da implementação.
+
+Não declare a tarefa concluída enquanto houver pendências, erros conhecidos, partes simuladas, integrações incompletas ou pontos sem validação.
+
+A solução final deve estar: integrada; consistente; testada; segura; funcional; documentada; pronta para produção.
+
+Ao finalizar cada tarefa, apresente um resumo contendo: arquivos alterados; impactos identificados; testes executados; integrações validadas; riscos ou pendências restantes.
+
+Nunca afirme que o sistema está 100% validado sem ter executado as verificações correspondentes.
